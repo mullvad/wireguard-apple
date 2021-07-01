@@ -447,6 +447,27 @@ public class WireGuardAdapter {
         }
     }
 
+    /// Tells if the network path can be used to access network, taking into account if `utun` is the only active
+    /// interface.
+    /// - Parameter path: network path
+    private func canPathBeSatisfied(_ path: Network.NWPath) -> Bool {
+        // Assume that connectivity is not available, when `utun` is the only available interface.
+        if let networkInterface = path.availableInterfaces.first,
+           path.availableInterfaces.count == 1,
+           networkInterface.name.starts(with: "utun") {
+            return false
+        }
+
+        switch path.status {
+        case .requiresConnection, .satisfied:
+            return true
+        case .unsatisfied:
+            return false
+        @unknown default:
+            return true
+        }
+    }
+
     /// Helper method used by network path monitor.
     /// - Parameter path: new network path
     private func didReceivePathUpdate(path: Network.NWPath) {
@@ -459,7 +480,7 @@ public class WireGuardAdapter {
         #elseif os(iOS)
         switch self.state {
         case .started(let handle, let settingsGenerator):
-            if path.status.isSatisfiable {
+            if canPathBeSatisfied(path) {
                 let (wgConfig, resolutionResults) = settingsGenerator.endpointUapiConfiguration()
                 self.logEndpointResolutionResults(resolutionResults)
 
@@ -474,7 +495,7 @@ public class WireGuardAdapter {
             }
 
         case .temporaryShutdown(let settingsGenerator):
-            guard path.status.isSatisfiable else { return }
+            guard canPathBeSatisfied(path) else { return }
 
             self.logHandler(.verbose, "Connectivity online, resuming backend.")
 
@@ -506,18 +527,4 @@ public class WireGuardAdapter {
 public enum WireGuardLogLevel: Int32 {
     case verbose = 0
     case error = 1
-}
-
-private extension Network.NWPath.Status {
-    /// Returns `true` if the path is potentially satisfiable.
-    var isSatisfiable: Bool {
-        switch self {
-        case .requiresConnection, .satisfied:
-            return true
-        case .unsatisfied:
-            return false
-        @unknown default:
-            return true
-        }
-    }
 }
