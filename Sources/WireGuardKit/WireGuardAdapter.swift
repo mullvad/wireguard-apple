@@ -278,6 +278,9 @@ public class WireGuardAdapter {
 
             switch self.state {
             case .started(let handle, _):
+                wgTurnOff(handle)
+                self.state = .stopped
+
                 do {
                     try self.setNetworkSettings(settingsGenerator.generateNetworkSettings())
                 } catch let error as WireGuardAdapterError {
@@ -290,12 +293,17 @@ public class WireGuardAdapter {
                 let (wgConfig, resolutionResults) = settingsGenerator.uapiConfiguration()
                 self.logEndpointResolutionResults(resolutionResults)
 
-                wgSetConfig(handle, wgConfig)
-                #if os(iOS)
-                wgDisableSomeRoamingForBrokenMobileSemantics(handle)
-                #endif
-
-                self.state = .started(handle, settingsGenerator)
+                do {
+                    self.state = .started(
+                        try self.startWireGuardBackend(wgConfig: wgConfig),
+                        settingsGenerator
+                    )
+                } catch let error as WireGuardAdapterError {
+                    completionHandler(error)
+                    return
+                } catch {
+                    fatalError()
+                }
 
             case .temporaryShutdown:
                 // On iOS 15.1 or newer, updating network settings may fail when in airplane mode.
