@@ -476,7 +476,7 @@ public class WireGuardAdapter {
 
         currentDefaultPath = path
 
-        self.logHandler(.verbose, "Network change detected with \(path.status) (isSamePath: \(isSamePath))")
+        self.logHandler(.verbose, "Network change detected with \(path.status)")
 
         #if os(macOS)
         if case .started(let handle, _) = self.state, !isSamePath {
