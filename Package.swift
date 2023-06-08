@@ -11,13 +11,13 @@ let package = Package(
     ],
     products: [
         .library(name: "WireGuardKit", targets: ["WireGuardKit"]),
-        .library(name: "WireGuardKitTypes", targets: ["WireGuardKitTypes"])
+        .library(name: "WireGuardKitTypes", type: .dynamic, targets: ["WireGuardKitTypes"])
     ],
     dependencies: [],
     targets: [
         .target(
             name: "WireGuardKit",
-            dependencies: ["WireGuardKitC", "WireGuardKitGo", "WireGuardKitTypes"]
+            dependencies: ["WireGuardKitGo", "WireGuardKitTypes"]
         ),
         .target(
             name: "WireGuardKitTypes",

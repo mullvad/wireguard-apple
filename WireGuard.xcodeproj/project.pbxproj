@@ -491,7 +491,8 @@
 				5807481527DB7DC00020ECBF /* PrivateKey.swift */,
 				5807481227DB7DC00020ECBF /* TunnelConfiguration.swift */,
 			);
-			path = WireGuardKitTypes;
+			name = WireGuardKitTypes;
+			path = Sources/WireGuardKitTypes;
 			sourceTree = "<group>";
 		};
 		585B10452577E293004F691E /* WireGuardKit */ = {
