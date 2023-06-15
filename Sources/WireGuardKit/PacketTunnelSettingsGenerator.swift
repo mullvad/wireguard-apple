@@ -74,6 +74,7 @@ class PacketTunnelSettingsGenerator {
         return (wgSettings, resolutionResults)
     }
 
+    @available(tvOS 17.0, *)
     func generateNetworkSettings() -> NEPacketTunnelNetworkSettings {
         /* iOS requires a tunnel endpoint, whereas in WireGuard it's valid for
          * a tunnel to have no endpoint, or for there to be many endpoints, in
@@ -102,7 +103,7 @@ class PacketTunnelSettingsGenerator {
          * add a nob, maybe, or iOS will do probing for us.
          */
         if mtu == 0 {
-            #if os(iOS)
+            #if os(iOS) || os(tvOS)
             networkSettings.mtu = NSNumber(value: 1280)
             #elseif os(macOS)
             networkSettings.tunnelOverheadBytes = 80
@@ -127,6 +128,7 @@ class PacketTunnelSettingsGenerator {
         return networkSettings
     }
 
+    @available(tvOS 17.0, *)
     private func addresses() -> ([NEIPv4Route], [NEIPv6Route]) {
         var ipv4Routes = [NEIPv4Route]()
         var ipv6Routes = [NEIPv6Route]()
@@ -145,6 +147,7 @@ class PacketTunnelSettingsGenerator {
         return (ipv4Routes, ipv6Routes)
     }
 
+    @available(tvOS 17.0, *)
     private func includedRoutes() -> ([NEIPv4Route], [NEIPv6Route]) {
         var ipv4IncludedRoutes = [NEIPv4Route]()
         var ipv6IncludedRoutes = [NEIPv6Route]()

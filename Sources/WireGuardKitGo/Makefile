@@ -4,7 +4,7 @@
 
 # These are generally passed to us by xcode, but we set working defaults for standalone compilation too.
 ARCHS ?= x86_64 arm64
-PLATFORM_NAME ?= macosx
+PLATFORM_NAME ?= appletvos
 SDKROOT ?= $(shell xcrun --sdk $(PLATFORM_NAME) --show-sdk-path)
 CONFIGURATION_BUILD_DIR ?= $(CURDIR)/out
 CONFIGURATION_TEMP_DIR ?= $(CURDIR)/.tmp
@@ -19,11 +19,11 @@ CFLAGS_PREFIX := $(if $(DEPLOYMENT_TARGET_CLANG_FLAG_NAME),-$(DEPLOYMENT_TARGET_
 GOARCH_arm64 := arm64
 GOARCH_x86_64 := amd64
 GOOS_macosx := darwin
-GOOS_iphoneos := ios
+GOOS_iphoneos := darwin
 
 UNAME := $(shell uname -m)
 ifeq ($(UNAME), $(GOARCH_arm64))
-	GOOS_iphonesimulator := ios
+	GOOS_iphonesimulator := darwin
 endif
 
 build: $(DESTDIR)/libwg-go.a

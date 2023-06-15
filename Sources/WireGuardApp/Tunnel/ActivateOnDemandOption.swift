@@ -10,7 +10,7 @@ enum ActivateOnDemandOption: Equatable {
     case anyInterface(ActivateOnDemandSSIDOption)
 }
 
-#if os(iOS)
+#if os(iOS) || os(tvOS)
 private let nonWiFiInterfaceType: NEOnDemandRuleInterfaceType = .cellular
 #elseif os(macOS)
 private let nonWiFiInterfaceType: NEOnDemandRuleInterfaceType = .ethernet

@@ -46,13 +46,21 @@ public class WireGuardAdapter {
     private var networkMonitor: NWPathMonitor?
 
     /// Packet tunnel provider.
+    #if os(iOS) || os(tvOS)
     private weak var packetTunnelProvider: NEPacketTunnelProvider?
+    #else
+    #error("Unimplemented")
+    #endif
 
     /// KVO observer for `NEProvider.defaultPath`.
     private var defaultPathObserver: NSKeyValueObservation?
 
     /// Last known default path.
+    #if os(iOS) || os(tvOS)
     private var currentDefaultPath: NetworkExtension.NWPath?
+    #else
+    #error("Unimplemented")
+    #endif
 
     /// Log handler closure.
     private let logHandler: LogHandler
@@ -142,6 +150,7 @@ public class WireGuardAdapter {
     /// - Parameter shouldHandleReasserting: whether adapter should automatically raise the
     ///   `reasserting` flag when updating tunnel configuration.
     /// - Parameter logHandler: a log handler closure.
+    @available(tvOS 17.0, *)
     public init(with packetTunnelProvider: NEPacketTunnelProvider, shouldHandleReasserting: Bool = true, logHandler: @escaping LogHandler) {
         self.packetTunnelProvider = packetTunnelProvider
         self.shouldHandleReasserting = shouldHandleReasserting
@@ -292,7 +301,7 @@ public class WireGuardAdapter {
                 self.logEndpointResolutionResults(resolutionResults)
 
                 wgSetConfig(handle, wgConfig)
-                #if os(iOS)
+                #if os(iOS) || os(tvOS)
                 wgDisableSomeRoamingForBrokenMobileSemantics(handle)
                 #endif
 
@@ -348,6 +357,7 @@ public class WireGuardAdapter {
     ///   - networkSettings: an instance of type `NEPacketTunnelNetworkSettings`.
     /// - Throws: an error of type `WireGuardAdapterError`.
     /// - Returns: `PacketTunnelSettingsGenerator`.
+    @available(tvOS 17.0, *)
     private func setNetworkSettings(_ networkSettings: NEPacketTunnelNetworkSettings) throws {
         var systemError: Error?
 
@@ -417,7 +427,7 @@ public class WireGuardAdapter {
         if handle < 0 {
             throw WireGuardAdapterError.startWireGuardBackend(handle)
         }
-        #if os(iOS)
+        #if os(iOS) || os(tvOS)
         wgDisableSomeRoamingForBrokenMobileSemantics(handle)
         #endif
         return handle
@@ -474,6 +484,7 @@ public class WireGuardAdapter {
 
     /// Method invoked by KVO observer when new network path is received.
     /// - Parameter path: new network path
+    @available(tvOS 17.0, *)
     private func didReceivePathUpdate(path: NetworkExtension.NWPath) {
         let isSamePath = currentDefaultPath?.isEqual(to: path) ?? false
 
@@ -485,7 +496,7 @@ public class WireGuardAdapter {
         if case .started(let handle, _) = self.state, !isSamePath {
             wgBumpSockets(handle)
         }
-        #elseif os(iOS)
+        #elseif os(iOS) || os(tvOS)
         let isSatisfiable = path.status == .satisfied || path.status == .satisfiable
 
         switch self.state {
@@ -541,6 +552,7 @@ public enum WireGuardLogLevel: Int32 {
     case error = 1
 }
 
+@available(tvOS 17.0, *)
 extension NetworkExtension.NWPathStatus: CustomDebugStringConvertible {
     public var debugDescription: String {
         switch self {
