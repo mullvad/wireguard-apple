@@ -16,6 +16,7 @@ import "C"
 import (
 	"fmt"
 	"math"
+	"net/netip"
 	"os"
 	"os/signal"
 	"runtime"
@@ -28,6 +29,7 @@ import (
 	"golang.zx2c4.com/wireguard/conn"
 	"golang.zx2c4.com/wireguard/device"
 	"golang.zx2c4.com/wireguard/tun"
+	"golang.zx2c4.com/wireguard/tun/netstack"
 )
 
 var loggerFunc unsafe.Pointer
@@ -52,8 +54,9 @@ func (l CLogger) Printf(format string, args ...interface{}) {
 }
 
 type tunnelHandle struct {
-	*device.Device
-	*device.Logger
+	wireGuardDevice *device.Device
+	virtualNet      *netstack.Net
+	logger          *device.Logger
 }
 
 var tunnelHandles = make(map[int32]tunnelHandle)
@@ -120,7 +123,7 @@ func wgTurnOn(settings *C.char, tunFd int32) int32 {
 	logger.Verbosef("Device started")
 
 	var i int32
-	for i = 0; i < math.MaxInt32; i++ {
+	for i = 1; i < math.MaxInt32; i++ {
 		if _, exists := tunnelHandles[i]; !exists {
 			break
 		}
@@ -129,29 +132,105 @@ func wgTurnOn(settings *C.char, tunFd int32) int32 {
 		unix.Close(dupTunFd)
 		return -1
 	}
-	tunnelHandles[i] = tunnelHandle{dev, logger}
+	tunnelHandles[i] = tunnelHandle{dev, nil, logger}
+	return i
+}
+
+//export wgTurnOnIAN
+func wgTurnOnIAN(settings *C.char, tunFd int32, privateIP *C.char) int32 {
+	logger := &device.Logger{
+		Verbosef: CLogger(0).Printf,
+		Errorf:   CLogger(1).Printf,
+	}
+
+	privateAddrStr := C.GoString(privateIP)
+	privateAddr, err := netip.ParseAddr(privateAddrStr)
+	if err != nil {
+		logger.Errorf("Invalid address: %s", privateAddrStr)
+		return -1
+	}
+
+	dupTunFd, err := unix.Dup(int(tunFd))
+	if err != nil {
+		logger.Errorf("Unable to dup tun fd: %v", err)
+		return -2
+	}
+
+	err = unix.SetNonblock(dupTunFd, true)
+	if err != nil {
+		logger.Errorf("Unable to set tun fd as non blocking: %v", err)
+		unix.Close(dupTunFd)
+		return -3
+	}
+	tun, err := tun.CreateTUNFromFile(os.NewFile(uintptr(dupTunFd), "/dev/tun"), 0)
+	if err != nil {
+		logger.Errorf("Unable to create new tun device from fd: %v", err)
+		unix.Close(dupTunFd)
+		return -4
+	}
+	/// assign the same private IPs associated with your key
+	vtun, virtualNet, err := netstack.CreateNetTUN([]netip.Addr{privateAddr}, []netip.Addr{}, 1280)
+
+	if err != nil {
+		logger.Errorf("Failed to initialize virtual tunnel device: %v", err)
+		tun.Close()
+		return -5
+	}
+
+	if virtualNet == nil {
+		logger.Errorf("Failed to initialize virtual tunnel device")
+		tun.Close()
+		return -6
+	}
+
+	wrapper := NewRouter(tun, vtun)
+	logger.Verbosef("Attaching to interface")
+	dev := device.NewDevice(&wrapper, conn.NewStdNetBind(), logger)
+
+	err = dev.IpcSet(C.GoString(settings))
+	if err != nil {
+		logger.Errorf("Unable to set IPC settings: %v", err)
+		dev.Close()
+		return -7
+	}
+
+	dev.Up()
+	logger.Verbosef("Device started")
+
+	var i int32
+	for i = 0; i < math.MaxInt32; i++ {
+		if _, exists := tunnelHandles[i]; !exists {
+			break
+		}
+	}
+	if i == math.MaxInt32 {
+		dev.Close()
+		return -8
+	}
+	tunnelHandles[i] = tunnelHandle{dev, virtualNet, logger}
+	// TODO: add a tunnel handle, or otherwise make sure we can create connections in the tunnel
 	return i
 }
 
 //export wgTurnOff
 func wgTurnOff(tunnelHandle int32) {
-	dev, ok := tunnelHandles[tunnelHandle]
+	handle, ok := tunnelHandles[tunnelHandle]
 	if !ok {
 		return
 	}
 	delete(tunnelHandles, tunnelHandle)
-	dev.Close()
+	handle.wireGuardDevice.Close()
 }
 
 //export wgSetConfig
 func wgSetConfig(tunnelHandle int32, settings *C.char) int64 {
-	dev, ok := tunnelHandles[tunnelHandle]
+	handle, ok := tunnelHandles[tunnelHandle]
 	if !ok {
 		return 0
 	}
-	err := dev.IpcSet(C.GoString(settings))
+	err := handle.wireGuardDevice.IpcSet(C.GoString(settings))
 	if err != nil {
-		dev.Errorf("Unable to set IPC settings: %v", err)
+		handle.logger.Errorf("Unable to set IPC settings: %v", err)
 		if ipcErr, ok := err.(*device.IPCError); ok {
 			return ipcErr.ErrorCode()
 		}
@@ -162,11 +241,11 @@ func wgSetConfig(tunnelHandle int32, settings *C.char) int64 {
 
 //export wgGetConfig
 func wgGetConfig(tunnelHandle int32) *C.char {
-	device, ok := tunnelHandles[tunnelHandle]
+	handle, ok := tunnelHandles[tunnelHandle]
 	if !ok {
 		return nil
 	}
-	settings, err := device.IpcGet()
+	settings, err := handle.wireGuardDevice.IpcGet()
 	if err != nil {
 		return nil
 	}
@@ -175,21 +254,21 @@ func wgGetConfig(tunnelHandle int32) *C.char {
 
 //export wgBumpSockets
 func wgBumpSockets(tunnelHandle int32) {
-	dev, ok := tunnelHandles[tunnelHandle]
+	handle, ok := tunnelHandles[tunnelHandle]
 	if !ok {
 		return
 	}
 	go func() {
 		for i := 0; i < 10; i++ {
-			err := dev.BindUpdate()
+			err := handle.wireGuardDevice.BindUpdate()
 			if err == nil {
-				dev.SendKeepalivesToPeersWithCurrentKeypair()
+				handle.wireGuardDevice.SendKeepalivesToPeersWithCurrentKeypair()
 				return
 			}
-			dev.Errorf("Unable to update bind, try %d: %v", i+1, err)
+			handle.logger.Errorf("Unable to update bind, try %d: %v", i+1, err)
 			time.Sleep(time.Second / 2)
 		}
-		dev.Errorf("Gave up trying to update bind; tunnel is likely dysfunctional")
+		handle.logger.Errorf("Gave up trying to update bind; tunnel is likely dysfunctional")
 	}()
 }
 
@@ -199,7 +278,7 @@ func wgDisableSomeRoamingForBrokenMobileSemantics(tunnelHandle int32) {
 	if !ok {
 		return
 	}
-	dev.DisableSomeRoamingForBrokenMobileSemantics()
+	dev.wireGuardDevice.DisableSomeRoamingForBrokenMobileSemantics()
 }
 
 //export wgVersion
