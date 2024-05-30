@@ -317,6 +317,80 @@ func wgTurnOnIAN(settings *C.char, tunFd int32, privateIP *C.char) int32 {
 	return i
 }
 
+//export wgTurnOnIAN
+func wgTurnOnIAN(settings *C.char, tunFd int32, privateIP *C.char) int32 {
+	logger := &device.Logger{
+		Verbosef: CLogger(0).Printf,
+		Errorf:   CLogger(1).Printf,
+	}
+
+	privateAddrStr := C.GoString(privateIP)
+	privateAddr, err := netip.ParseAddr(privateAddrStr)
+	if err != nil {
+		logger.Errorf("Invalid address: %s", privateAddrStr)
+		return -1
+	}
+
+	dupTunFd, err := unix.Dup(int(tunFd))
+	if err != nil {
+		logger.Errorf("Unable to dup tun fd: %v", err)
+		return -2
+	}
+
+	err = unix.SetNonblock(dupTunFd, true)
+	if err != nil {
+		logger.Errorf("Unable to set tun fd as non blocking: %v", err)
+		unix.Close(dupTunFd)
+		return -3
+	}
+	tun, err := tun.CreateTUNFromFile(os.NewFile(uintptr(dupTunFd), "/dev/tun"), 0)
+	if err != nil {
+		logger.Errorf("Unable to create new tun device from fd: %v", err)
+		unix.Close(dupTunFd)
+		return -4
+	}
+	/// assign the same private IPs associated with your key
+	vtun, virtualNet, err := netstack.CreateNetTUN([]netip.Addr{privateAddr}, []netip.Addr{}, 1280)
+
+	if err != nil {
+		logger.Errorf("Failed to initialize virtual tunnel device: %v", err)
+		return -5
+	}
+
+	if virtualNet == nil {
+		logger.Errorf("Failed to initialize virtual tunnel device")
+		return -6
+	}
+
+	wrapper := NewRouter(tun, vtun)
+	logger.Verbosef("Attaching to interface")
+	dev := device.NewDevice(&wrapper, conn.NewStdNetBind(), logger)
+
+	err = dev.IpcSet(C.GoString(settings))
+	if err != nil {
+		logger.Errorf("Unable to set IPC settings: %v", err)
+		unix.Close(dupTunFd)
+		return -7
+	}
+
+	dev.Up()
+	logger.Verbosef("Device started")
+
+	var i int32
+	for i = 0; i < math.MaxInt32; i++ {
+		if _, exists := tunnelHandles[i]; !exists {
+			break
+		}
+	}
+	if i == math.MaxInt32 {
+		unix.Close(dupTunFd)
+		return -8
+	}
+	tunnelHandles[i] = tunnelHandle{dev, logger}
+	// TODO: add a tunnel handle, or otherwise make sure we can create connections in the tunnel
+	return i
+}
+
 //export wgTurnOff
 func wgTurnOff(tunnelHandle int32) {
 	handle, ok := tunnelHandles[tunnelHandle]
