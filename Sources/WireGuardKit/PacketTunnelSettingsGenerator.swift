@@ -12,68 +12,10 @@ import WireGuardKitTypes
 /// A type alias for `Result` type that holds a tuple with source and resolved endpoint.
 typealias EndpointResolutionResult = Result<(Endpoint, Endpoint), DNSResolutionError>
 
-class PacketTunnelSettingsGenerator {
-    let tunnelConfiguration: TunnelConfiguration
+struct DeviceConfiguration {
+    let configuration: TunnelConfiguration
     let resolvedEndpoints: [Endpoint?]
-
-    init(tunnelConfiguration: TunnelConfiguration, resolvedEndpoints: [Endpoint?]) {
-        self.tunnelConfiguration = tunnelConfiguration
-        self.resolvedEndpoints = resolvedEndpoints
-    }
-
-    func endpointUapiConfiguration() -> (String, [EndpointResolutionResult?]) {
-        var resolutionResults = [EndpointResolutionResult?]()
-        var wgSettings = ""
-
-        assert(tunnelConfiguration.peers.count == resolvedEndpoints.count)
-        for (peer, resolvedEndpoint) in zip(self.tunnelConfiguration.peers, self.resolvedEndpoints) {
-            wgSettings.append("public_key=\(peer.publicKey.hexKey)\n")
-
-            let result = resolvedEndpoint.map(Self.reresolveEndpoint)
-            if case .success((_, let resolvedEndpoint)) = result {
-                if case .name = resolvedEndpoint.host { assert(false, "Endpoint is not resolved") }
-                wgSettings.append("endpoint=\(resolvedEndpoint.stringRepresentation)\n")
-            }
-            resolutionResults.append(result)
-        }
-
-        return (wgSettings, resolutionResults)
-    }
-
-    func uapiConfiguration() -> (String, [EndpointResolutionResult?]) {
-        var resolutionResults = [EndpointResolutionResult?]()
-        var wgSettings = ""
-        wgSettings.append("private_key=\(tunnelConfiguration.interface.privateKey.hexKey)\n")
-        if let listenPort = tunnelConfiguration.interface.listenPort {
-            wgSettings.append("listen_port=\(listenPort)\n")
-        }
-        if !tunnelConfiguration.peers.isEmpty {
-            wgSettings.append("replace_peers=true\n")
-        }
-        assert(tunnelConfiguration.peers.count == resolvedEndpoints.count)
-        for (peer, resolvedEndpoint) in zip(self.tunnelConfiguration.peers, self.resolvedEndpoints) {
-            wgSettings.append("public_key=\(peer.publicKey.hexKey)\n")
-            if let preSharedKey = peer.preSharedKey?.hexKey {
-                wgSettings.append("preshared_key=\(preSharedKey)\n")
-            }
-
-            let result = resolvedEndpoint.map(Self.reresolveEndpoint)
-            if case .success((_, let resolvedEndpoint)) = result {
-                if case .name = resolvedEndpoint.host { assert(false, "Endpoint is not resolved") }
-                wgSettings.append("endpoint=\(resolvedEndpoint.stringRepresentation)\n")
-            }
-            resolutionResults.append(result)
-
-            let persistentKeepAlive = peer.persistentKeepAlive ?? 0
-            wgSettings.append("persistent_keepalive_interval=\(persistentKeepAlive)\n")
-            if !peer.allowedIPs.isEmpty {
-                wgSettings.append("replace_allowed_ips=true\n")
-                peer.allowedIPs.forEach { wgSettings.append("allowed_ip=\($0.stringRepresentation)\n") }
-            }
-        }
-        return (wgSettings, resolutionResults)
-    }
-
+    
     func generateNetworkSettings() -> NEPacketTunnelNetworkSettings {
         /* iOS requires a tunnel endpoint, whereas in WireGuard it's valid for
          * a tunnel to have no endpoint, or for there to be many endpoints, in
@@ -83,17 +25,17 @@ class PacketTunnelSettingsGenerator {
          */
         let networkSettings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: "127.0.0.1")
 
-        if !tunnelConfiguration.interface.dnsSearch.isEmpty || !tunnelConfiguration.interface.dns.isEmpty {
-            let dnsServerStrings = tunnelConfiguration.interface.dns.map { $0.stringRepresentation }
+        if !configuration.interface.dnsSearch.isEmpty || !configuration.interface.dns.isEmpty {
+            let dnsServerStrings = configuration.interface.dns.map { $0.stringRepresentation }
             let dnsSettings = NEDNSSettings(servers: dnsServerStrings)
-            dnsSettings.searchDomains = tunnelConfiguration.interface.dnsSearch
-            if !tunnelConfiguration.interface.dns.isEmpty {
+            dnsSettings.searchDomains = configuration.interface.dnsSearch
+            if !configuration.interface.dns.isEmpty {
                 dnsSettings.matchDomains = [""] // All DNS queries must first go through the tunnel's DNS
             }
             networkSettings.dnsSettings = dnsSettings
         }
 
-        let mtu = tunnelConfiguration.interface.mtu ?? 0
+        let mtu = configuration.interface.mtu ?? 0
 
         /* 0 means automatic MTU. In theory, we should just do
          * `networkSettings.tunnelOverheadBytes = 80` but in
@@ -126,11 +68,49 @@ class PacketTunnelSettingsGenerator {
 
         return networkSettings
     }
+    
+    func innerMTU() -> UInt16 {
+        MTU() - 80
+    }
+    
+    func MTU() -> UInt16 {
+         /* 0 means automatic MTU. In theory, we should just do
+         * `networkSettings.tunnelOverheadBytes = 80` but in
+         * practice there are too many broken networks out there.
+         * Instead set it to 1280. Boohoo. Maybe someday we'll
+         * add a nob, maybe, or iOS will do probing for us.
+         */
+        let mtu = configuration.interface.mtu ?? 0
+        if mtu != 0 {
+           return mtu
+        } else {
+           return 1280 + 80
+        }
+    }
 
+    func endpointUapiConfiguration() -> (String, [EndpointResolutionResult?]) {
+        var resolutionResults = [EndpointResolutionResult?]()
+        var wgSettings = ""
+
+        assert(configuration.peers.count == resolvedEndpoints.count)
+        for (peer, resolvedEndpoint) in zip(self.configuration.peers, self.resolvedEndpoints) {
+            wgSettings.append("public_key=\(peer.publicKey.hexKey)\n")
+
+            let result = resolvedEndpoint.map(PacketTunnelSettingsGenerator.reresolveEndpoint)
+            if case .success((_, let resolvedEndpoint)) = result {
+                if case .name = resolvedEndpoint.host { assert(false, "Endpoint is not resolved") }
+                wgSettings.append("endpoint=\(resolvedEndpoint.stringRepresentation)\n")
+            }
+            resolutionResults.append(result)
+        }
+
+        return (wgSettings, resolutionResults)
+    }
+    
     private func addresses() -> ([NEIPv4Route], [NEIPv6Route]) {
         var ipv4Routes = [NEIPv4Route]()
         var ipv6Routes = [NEIPv6Route]()
-        for addressRange in tunnelConfiguration.interface.addresses {
+        for addressRange in configuration.interface.addresses {
             if addressRange.address is IPv4Address {
                 ipv4Routes.append(NEIPv4Route(destinationAddress: "\(addressRange.address)", subnetMask: "\(addressRange.subnetMask())"))
             } else if addressRange.address is IPv6Address {
@@ -155,7 +135,7 @@ class PacketTunnelSettingsGenerator {
         let defaultIPv6Route = NEIPv6Route.default()
         ipv6IncludedRoutes.append(defaultIPv6Route)
 
-        for addressRange in tunnelConfiguration.interface.addresses {
+        for addressRange in configuration.interface.addresses {
             if addressRange.address is IPv4Address {
                 let route = NEIPv4Route(destinationAddress: "\(addressRange.maskedAddress())", subnetMask: "\(addressRange.subnetMask())")
                 route.gatewayAddress = "\(addressRange.address)"
@@ -167,7 +147,7 @@ class PacketTunnelSettingsGenerator {
             }
         }
 
-        for peer in tunnelConfiguration.peers {
+        for peer in configuration.peers {
             for addressRange in peer.allowedIPs {
                 if addressRange.address is IPv4Address {
                     ipv4IncludedRoutes.append(NEIPv4Route(destinationAddress: "\(addressRange.address)", subnetMask: "\(addressRange.subnetMask())"))
@@ -179,7 +159,78 @@ class PacketTunnelSettingsGenerator {
         return (ipv4IncludedRoutes, ipv6IncludedRoutes)
     }
 
-    private class func reresolveEndpoint(endpoint: Endpoint) -> EndpointResolutionResult {
+}
+
+class PacketTunnelSettingsGenerator {
+    let exit: DeviceConfiguration
+    let entry: DeviceConfiguration?
+
+    init(exit: DeviceConfiguration, entry: DeviceConfiguration? = nil) {
+        self.exit = exit
+        self.entry = entry
+    }
+    
+
+
+    func entryUapiConfiguration() -> (String, [EndpointResolutionResult?])? {
+        if let entry {
+            uapiConfiguration(for: entry)
+        } else {
+            nil
+        }
+    }
+    
+    private func uapiConfiguration(for device: DeviceConfiguration) -> (String, [EndpointResolutionResult?]) {
+         var resolutionResults = [EndpointResolutionResult?]()
+        var wgSettings = ""
+        wgSettings.append("private_key=\(device.configuration.interface.privateKey.hexKey)\n")
+        if let listenPort = device.configuration.interface.listenPort {
+            wgSettings.append("listen_port=\(listenPort)\n")
+        }
+        if !device.configuration.peers.isEmpty {
+            wgSettings.append("replace_peers=true\n")
+        }
+        assert(device.configuration.peers.count == device.resolvedEndpoints.count)
+        for (peer, resolvedEndpoint) in zip(device.configuration.peers, device.resolvedEndpoints) {
+            wgSettings.append("public_key=\(peer.publicKey.hexKey)\n")
+            if let preSharedKey = peer.preSharedKey?.hexKey {
+                wgSettings.append("preshared_key=\(preSharedKey)\n")
+            }
+
+            let result = resolvedEndpoint.map(Self.reresolveEndpoint)
+            if case .success((_, let resolvedEndpoint)) = result {
+                if case .name = resolvedEndpoint.host { assert(false, "Endpoint is not resolved") }
+                wgSettings.append("endpoint=\(resolvedEndpoint.stringRepresentation)\n")
+            }
+            resolutionResults.append(result)
+
+            let persistentKeepAlive = peer.persistentKeepAlive ?? 0
+            wgSettings.append("persistent_keepalive_interval=\(persistentKeepAlive)\n")
+            if !peer.allowedIPs.isEmpty {
+                wgSettings.append("replace_allowed_ips=true\n")
+                peer.allowedIPs.forEach { wgSettings.append("allowed_ip=\($0.stringRepresentation)\n") }
+            }
+        }
+        return (wgSettings, resolutionResults)
+
+    }
+    func uapiConfiguration() -> (String, [EndpointResolutionResult?]) {
+        uapiConfiguration(for: self.exit)
+   }
+
+    func generateNetworkSettings() -> NEPacketTunnelNetworkSettings {
+        exit.generateNetworkSettings()
+    }
+    
+    func endpointUapiConfiguration() -> (String, [EndpointResolutionResult?]) {
+        exit.endpointUapiConfiguration()
+    }
+    
+    func entryEndpointUapiConfiguration() -> (String, [EndpointResolutionResult?])? {
+        entry?.endpointUapiConfiguration()
+    }
+
+    class fileprivate func reresolveEndpoint(endpoint: Endpoint) -> EndpointResolutionResult {
         return Result { (endpoint, try endpoint.withReresolvedIP()) }
             .mapError { error -> DNSResolutionError in
                 // swiftlint:disable:next force_cast
