@@ -25,6 +25,9 @@ public enum WireGuardAdapterError: Error {
 
     /// Failure to start WireGuard backend.
     case startWireGuardBackend(Int32)
+    
+    /// Config has no private IPs.
+    case noInterfaceIp
 }
 
 /// Enum representing internal state of the `WireGuardAdapter`
@@ -200,9 +203,12 @@ public class WireGuardAdapter {
                 let (exitWgConfig, resolutionResults) = settingsGenerator.uapiConfiguration()
                 let entryWgConfig = settingsGenerator.entryUapiConfiguration()?.0
                 self.logEndpointResolutionResults(resolutionResults)
+                guard let privateIp = exitConfiguration.interface.addresses.first else {
+                    throw WireGuardAdapterError.noInterfaceIp
+                }
 
                 self.state = .started(
-                    try self.startWireGuardBackend(exitWgConfig: exitWgConfig, entryWgConfig: entryWgConfig),
+                    try self.startWireGuardBackend(exitWgConfig: exitWgConfig, privateIp: "\(privateIp.address)", entryWgConfig: entryWgConfig),
                     settingsGenerator
                 )
 
@@ -415,13 +421,13 @@ public class WireGuardAdapter {
     /// - Parameter wgConfig: WireGuard configuration
     /// - Throws: an error of type `WireGuardAdapterError`
     /// - Returns: tunnel handle
-    private func startWireGuardBackend(exitWgConfig: String, entryWgConfig: String? = nil) throws -> Int32 {
+    private func startWireGuardBackend(exitWgConfig: String, privateIp: String, entryWgConfig: String? = nil) throws -> Int32 {
         guard let tunnelFileDescriptor = self.tunnelFileDescriptor else {
             throw WireGuardAdapterError.cannotLocateTunnelFileDescriptor
         }
 
         let handle = if let entryWgConfig {
-            wgTurnOnMultihop(exitWgConfig, entryWgConfig, tunnelFileDescriptor)
+            wgTurnOnMultihop(exitWgConfig, entryWgConfig, privateIp, tunnelFileDescriptor)
         } else {
             wgTurnOn(exitWgConfig, tunnelFileDescriptor)
         }

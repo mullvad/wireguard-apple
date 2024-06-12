@@ -86,11 +86,12 @@ func wgSetLogger(context, loggerFn uintptr) {
 }
 
 //export wgTurnOnMultihop
-func wgTurnOnMultihop(exitSettings *C.char, entrySettings *C.char, tunFd int32, mtu int) int32 {
+func wgTurnOnMultihop(exitSettings *C.char, entrySettings *C.char, privateIp *C.char, tunFd int32, mtu int) int32 {
 	logger := &device.Logger{
 		Verbosef: CLogger(0).Printf,
 		Errorf:   CLogger(1).Printf,
 	}
+
 	dupTunFd, err := unix.Dup(int(tunFd))
 	if err != nil {
 		logger.Errorf("Unable to dup tun fd: %v", err)
@@ -110,7 +111,12 @@ func wgTurnOnMultihop(exitSettings *C.char, entrySettings *C.char, tunFd int32, 
 		return -1
 	}
 
-	vtun, virtualNet, err := netstack.CreateNetTUN([]netip.Addr{}, []netip.Addr{}, mtu)
+	ip, err := netip.ParseAddr(C.GoString(privateIp))
+	if err != nil {
+		return -1
+	}
+
+	vtun, virtualNet, err := netstack.CreateNetTUN([]netip.Addr{ip}, []netip.Addr{}, mtu)
 	if err != nil {
 		logger.Errorf("Failed to create new virtual tunnel: %v", err)
 		return -1
