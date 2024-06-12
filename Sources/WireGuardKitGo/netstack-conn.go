@@ -2,11 +2,14 @@ package main
 
 import (
 	"bufio"
+	"errors"
+	"fmt"
 	"net"
 	"net/netip"
 	"strings"
 
 	"golang.zx2c4.com/wireguard/conn"
+	"golang.zx2c4.com/wireguard/device"
 	"golang.zx2c4.com/wireguard/tun/netstack"
 	"gvisor.dev/gvisor/pkg/tcpip/adapters/gonet"
 )
@@ -15,6 +18,7 @@ type NetstackBind struct {
 	*netstack.Net
 	socket       *gonet.UDPConn
 	peerEndpoint net.UDPAddr
+	logger       *device.Logger
 }
 
 type NetstackBindAddr struct {
@@ -53,18 +57,19 @@ func (a *NetstackBindAddr) SrcToString() string {
 	return a.localEndpoint.String()
 }
 
-func NewNetstackBind(net *netstack.Net, peerEndpoint net.UDPAddr) NetstackBind {
+func NewNetstackBind(net *netstack.Net, peerEndpoint net.UDPAddr, logger *device.Logger) NetstackBind {
 	return NetstackBind{
 		net,
 		nil,
 		peerEndpoint,
+		logger,
 	}
 
 }
 
 // BatchSize implements conn.Bind.
 func (*NetstackBind) BatchSize() int {
-	return conn.IdealBatchSize
+	return 1
 }
 
 // Close implements conn.Bind.
@@ -85,15 +90,20 @@ func (b *NetstackBind) Open(port uint16) (fns []conn.ReceiveFunc, actualPort uin
 	}
 
 	listenAddr := listener.LocalAddr().(*net.UDPAddr)
+	b.logger.Verbosef("Opened local socket with addr %v", listenAddr)
 
 	b.socket = listener
 
 	recvFunc := func(packets [][]byte, sizes []int, eps []conn.Endpoint) (n int, err error) {
+		b.logger.Verbosef("Reading from local socket %v", listenAddr)
 		if len(packets) == 0 {
 			return
 		}
 		bytesRead, addr, err := listener.ReadFrom(packets[0])
-		udpAddr, _ := addr.(*net.UDPAddr)
+		udpAddr, ok := addr.(*net.UDPAddr)
+		if !ok {
+			return 0, errors.New(fmt.Sprintf("Unrecognized UDP addr: %v", addr))
+		}
 		eps[0] = &NetstackBindAddr{remoteEndpoint: udpAddr, localEndpoint: listenAddr}
 		sizes[0] = bytesRead
 		if err != nil {
@@ -118,8 +128,12 @@ func (*NetstackBind) ParseEndpoint(s string) (conn.Endpoint, error) {
 // Send implements conn.Bind.
 // Endpoint argument is ignored, the endpoint is known ahead of time anyway.
 func (b *NetstackBind) Send(bufs [][]byte, ep conn.Endpoint) (err error) {
+	b.logger.Verbosef("AYYO Sending to %v", ep)
 	for idx := range bufs {
 		_, err = b.socket.WriteTo(bufs[idx], &b.peerEndpoint)
+		if err != nil {
+			b.logger.Verbosef("Failed to send to %v: %v", ep, err)
+		}
 	}
 	return
 

@@ -45,7 +45,7 @@ struct DeviceConfiguration {
          */
         if mtu == 0 {
             #if os(iOS)
-            networkSettings.mtu = NSNumber(value: 1280)
+            networkSettings.mtu = NSNumber(value: 1380)
             #elseif os(macOS)
             networkSettings.tunnelOverheadBytes = 80
             #else
@@ -67,6 +67,25 @@ struct DeviceConfiguration {
         networkSettings.ipv6Settings = ipv6Settings
 
         return networkSettings
+    }
+    
+    func innerMTU() -> UInt16 {
+        MTU() - 80
+    }
+    
+    func MTU() -> UInt16 {
+         /* 0 means automatic MTU. In theory, we should just do
+         * `networkSettings.tunnelOverheadBytes = 80` but in
+         * practice there are too many broken networks out there.
+         * Instead set it to 1280. Boohoo. Maybe someday we'll
+         * add a nob, maybe, or iOS will do probing for us.
+         */
+        let mtu = configuration.interface.mtu ?? 0
+        if mtu != 0 {
+           return mtu
+        } else {
+           return 1280 + 80
+        }
     }
 
     func endpointUapiConfiguration() -> (String, [EndpointResolutionResult?]) {

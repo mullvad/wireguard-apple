@@ -208,7 +208,7 @@ public class WireGuardAdapter {
                 }
 
                 self.state = .started(
-                    try self.startWireGuardBackend(exitWgConfig: exitWgConfig, privateIp: "\(privateIp.address)", entryWgConfig: entryWgConfig),
+                    try self.startWireGuardBackend(exitWgConfig: exitWgConfig, privateIp: "\(privateIp.address)", entryWgConfig: entryWgConfig, mtu: settingsGenerator.exit.innerMTU()),
                     settingsGenerator
                 )
 
@@ -421,13 +421,13 @@ public class WireGuardAdapter {
     /// - Parameter wgConfig: WireGuard configuration
     /// - Throws: an error of type `WireGuardAdapterError`
     /// - Returns: tunnel handle
-    private func startWireGuardBackend(exitWgConfig: String, privateIp: String, entryWgConfig: String? = nil) throws -> Int32 {
+    private func startWireGuardBackend(exitWgConfig: String, privateIp: String, entryWgConfig: String? = nil, mtu: UInt16 = 1280) throws -> Int32 {
         guard let tunnelFileDescriptor = self.tunnelFileDescriptor else {
             throw WireGuardAdapterError.cannotLocateTunnelFileDescriptor
         }
 
         let handle = if let entryWgConfig {
-            wgTurnOnMultihop(exitWgConfig, entryWgConfig, privateIp, tunnelFileDescriptor)
+            wgTurnOnMultihop(exitWgConfig, entryWgConfig, privateIp, tunnelFileDescriptor, Int32(mtu))
         } else {
             wgTurnOn(exitWgConfig, tunnelFileDescriptor)
         }
@@ -543,8 +543,9 @@ public class WireGuardAdapter {
                 let (wgConfig, resolutionResults) = settingsGenerator.uapiConfiguration()
                 self.logEndpointResolutionResults(resolutionResults)
 
+                let ip = settingsGenerator.exit.configuration.interface.addresses.first?.address ?? IPv4Address.any
                 self.state = .started(
-                    try self.startWireGuardBackend(exitWgConfig: wgConfig),
+                    try self.startWireGuardBackend(exitWgConfig: wgConfig, privateIp: "\(ip)"),
                     settingsGenerator
                 )
             } catch {
