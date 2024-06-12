@@ -16,6 +16,7 @@ import "C"
 import (
 	"fmt"
 	"math"
+	"net/netip"
 	"os"
 	"os/signal"
 	"runtime"
@@ -28,6 +29,7 @@ import (
 	"golang.zx2c4.com/wireguard/conn"
 	"golang.zx2c4.com/wireguard/device"
 	"golang.zx2c4.com/wireguard/tun"
+	"golang.zx2c4.com/wireguard/tun/netstack"
 )
 
 var loggerFunc unsafe.Pointer
@@ -52,8 +54,9 @@ func (l CLogger) Printf(format string, args ...interface{}) {
 }
 
 type tunnelHandle struct {
-	*device.Device
-	*device.Logger
+	exit   *device.Device
+	entry  *device.Device
+	logger *device.Logger
 }
 
 var tunnelHandles = make(map[int32]tunnelHandle)
@@ -83,8 +86,77 @@ func wgSetLogger(context, loggerFn uintptr) {
 }
 
 //export wgTurnOnMultihop
-func wgTurnOnMultihop(settings *C.char, entrySettings *C.char, tunFd int32) int32 {
-	return wgTurnOn(settings, tunFd)
+func wgTurnOnMultihop(exitSettings *C.char, entrySettings *C.char, tunFd int32, mtu int) int32 {
+	logger := &device.Logger{
+		Verbosef: CLogger(0).Printf,
+		Errorf:   CLogger(1).Printf,
+	}
+	dupTunFd, err := unix.Dup(int(tunFd))
+	if err != nil {
+		logger.Errorf("Unable to dup tun fd: %v", err)
+		return -1
+	}
+
+	err = unix.SetNonblock(dupTunFd, true)
+	if err != nil {
+		logger.Errorf("Unable to set tun fd as non blocking: %v", err)
+		unix.Close(dupTunFd)
+		return -1
+	}
+	tun, err := tun.CreateTUNFromFile(os.NewFile(uintptr(dupTunFd), "/dev/tun"), 0)
+	if err != nil {
+		logger.Errorf("Unable to create new tun device from fd: %v", err)
+		unix.Close(dupTunFd)
+		return -1
+	}
+
+	vtun, virtualNet, err := netstack.CreateNetTUN([]netip.Addr{}, []netip.Addr{}, mtu)
+	if err != nil {
+		logger.Errorf("Failed to create new virtual tunnel: %v", err)
+		return -1
+	}
+
+	entryConfigString := C.GoString(entrySettings)
+	exitEndpoint := parseEndpointFromGoConfig(entryConfigString)
+	if exitEndpoint != nil {
+		return -1
+	}
+
+	virtualBind := NewNetstackBind(virtualNet, *exitEndpoint)
+
+	exitDev := device.NewDevice(tun, &virtualBind, logger)
+	entryDev := device.NewDevice(vtun, conn.NewStdNetBind(), logger)
+
+	err = entryDev.IpcSet(entryConfigString)
+	if err != nil {
+		logger.Errorf("Unable to set IPC settings: %v", err)
+		unix.Close(dupTunFd)
+		return -1
+	}
+
+	err = exitDev.IpcSet(C.GoString(exitSettings))
+	if err != nil {
+		logger.Errorf("Unable to set IPC settings: %v", err)
+		unix.Close(dupTunFd)
+		return -1
+	}
+
+	entryDev.Up()
+	exitDev.Up()
+	logger.Verbosef("Device started")
+
+	var i int32
+	for i = 0; i < math.MaxInt32; i++ {
+		if _, exists := tunnelHandles[i]; !exists {
+			break
+		}
+	}
+	if i == math.MaxInt32 {
+		unix.Close(dupTunFd)
+		return -1
+	}
+	tunnelHandles[i] = tunnelHandle{exitDev, entryDev, logger}
+	return i
 }
 
 //export wgTurnOn
@@ -134,7 +206,7 @@ func wgTurnOn(settings *C.char, tunFd int32) int32 {
 		unix.Close(dupTunFd)
 		return -1
 	}
-	tunnelHandles[i] = tunnelHandle{dev, logger}
+	tunnelHandles[i] = tunnelHandle{dev, dev, logger}
 	return i
 }
 
@@ -145,18 +217,22 @@ func wgTurnOff(tunnelHandle int32) {
 		return
 	}
 	delete(tunnelHandles, tunnelHandle)
-	dev.Close()
+	if dev.entry != nil {
+		dev.entry.Close()
+	}
+
+	dev.exit.Close()
 }
 
 //export wgSetConfig
-func wgSetConfig(tunnelHandle int32, exitSettings *C.char, entrySettings *C.char) int64 {
+func wgSetConfig(tunnelHandle int32, settings *C.char) int64 {
 	dev, ok := tunnelHandles[tunnelHandle]
 	if !ok {
 		return 0
 	}
-	err := dev.IpcSet(C.GoString(exitSettings))
+	err := dev.exit.IpcSet(C.GoString(settings))
 	if err != nil {
-		dev.Errorf("Unable to set IPC settings: %v", err)
+		dev.logger.Errorf("Unable to set IPC settings: %v", err)
 		if ipcErr, ok := err.(*device.IPCError); ok {
 			return ipcErr.ErrorCode()
 		}
@@ -171,7 +247,7 @@ func wgGetConfig(tunnelHandle int32) *C.char {
 	if !ok {
 		return nil
 	}
-	settings, err := device.IpcGet()
+	settings, err := device.exit.IpcGet()
 	if err != nil {
 		return nil
 	}
@@ -186,15 +262,15 @@ func wgBumpSockets(tunnelHandle int32) {
 	}
 	go func() {
 		for i := 0; i < 10; i++ {
-			err := dev.BindUpdate()
+			err := dev.entry.BindUpdate()
 			if err == nil {
-				dev.SendKeepalivesToPeersWithCurrentKeypair()
+				dev.entry.SendKeepalivesToPeersWithCurrentKeypair()
 				return
 			}
-			dev.Errorf("Unable to update bind, try %d: %v", i+1, err)
+			dev.logger.Errorf("Unable to update bind, try %d: %v", i+1, err)
 			time.Sleep(time.Second / 2)
 		}
-		dev.Errorf("Gave up trying to update bind; tunnel is likely dysfunctional")
+		dev.logger.Errorf("Gave up trying to update bind; tunnel is likely dysfunctional")
 	}()
 }
 
@@ -204,7 +280,7 @@ func wgDisableSomeRoamingForBrokenMobileSemantics(tunnelHandle int32) {
 	if !ok {
 		return
 	}
-	dev.DisableSomeRoamingForBrokenMobileSemantics()
+	dev.exit.DisableSomeRoamingForBrokenMobileSemantics()
 }
 
 //export wgVersion
