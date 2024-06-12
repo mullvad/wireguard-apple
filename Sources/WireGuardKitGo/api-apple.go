@@ -82,6 +82,11 @@ func wgSetLogger(context, loggerFn uintptr) {
 	loggerFunc = unsafe.Pointer(loggerFn)
 }
 
+//export wgTurnOnMultihop
+func wgTurnOnMultihop(settings *C.char, entrySettings *C.char, tunFd int32) int32 {
+	return wgTurnOn(settings, tunFd)
+}
+
 //export wgTurnOn
 func wgTurnOn(settings *C.char, tunFd int32) int32 {
 	logger := &device.Logger{
@@ -144,12 +149,12 @@ func wgTurnOff(tunnelHandle int32) {
 }
 
 //export wgSetConfig
-func wgSetConfig(tunnelHandle int32, settings *C.char) int64 {
+func wgSetConfig(tunnelHandle int32, exitSettings *C.char, entrySettings *C.char) int64 {
 	dev, ok := tunnelHandles[tunnelHandle]
 	if !ok {
 		return 0
 	}
-	err := dev.IpcSet(C.GoString(settings))
+	err := dev.IpcSet(C.GoString(exitSettings))
 	if err != nil {
 		dev.Errorf("Unable to set IPC settings: %v", err)
 		if ipcErr, ok := err.(*device.IPCError); ok {

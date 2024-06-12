@@ -13,8 +13,9 @@
 typedef void(*logger_fn_t)(void *context, int level, const char *msg);
 extern void wgSetLogger(void *context, logger_fn_t logger_fn);
 extern int wgTurnOn(const char *settings, int32_t tun_fd);
+extern int wgTurnOnMultihop(const char *exitSettings, const char *entrySettings,int32_t tun_fd);
 extern void wgTurnOff(int handle);
-extern int64_t wgSetConfig(int handle, const char *settings);
+extern int64_t wgSetConfig(int handle, const char *exitSettings, const char *entrySettings);
 extern char *wgGetConfig(int handle);
 extern void wgBumpSockets(int handle);
 extern void wgDisableSomeRoamingForBrokenMobileSemantics(int handle);

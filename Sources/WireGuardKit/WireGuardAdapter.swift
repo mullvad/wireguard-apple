@@ -183,12 +183,8 @@ public class WireGuardAdapter {
             }
         }
     }
-
-    /// Start the tunnel tunnel.
-    /// - Parameters:
-    ///   - tunnelConfiguration: tunnel configuration.
-    ///   - completionHandler: completion handler.
-    public func start(tunnelConfiguration: TunnelConfiguration, completionHandler: @escaping (WireGuardAdapterError?) -> Void) {
+    
+    public func startMultihop(exitConfiguration: TunnelConfiguration, entryConfiguration: TunnelConfiguration?, completionHandler: @escaping (WireGuardAdapterError?) -> Void) {
         workQueue.async {
             guard case .stopped = self.state else {
                 completionHandler(.invalidState)
@@ -198,14 +194,15 @@ public class WireGuardAdapter {
             self.addDefaultPathObserver()
 
             do {
-                let settingsGenerator = try self.makeSettingsGenerator(with: tunnelConfiguration)
+                let settingsGenerator = try self.makeSettingsGenerator(with: exitConfiguration, entryConfiguration: entryConfiguration)
                 try self.setNetworkSettings(settingsGenerator.generateNetworkSettings())
 
-                let (wgConfig, resolutionResults) = settingsGenerator.uapiConfiguration()
+                let (exitWgConfig, resolutionResults) = settingsGenerator.uapiConfiguration()
+                let entryWgConfig = settingsGenerator.entryUapiConfiguration()?.0
                 self.logEndpointResolutionResults(resolutionResults)
 
                 self.state = .started(
-                    try self.startWireGuardBackend(wgConfig: wgConfig),
+                    try self.startWireGuardBackend(exitWgConfig: exitWgConfig, entryWgConfig: entryWgConfig),
                     settingsGenerator
                 )
 
@@ -217,6 +214,15 @@ public class WireGuardAdapter {
                 fatalError()
             }
         }
+    
+    }
+
+    /// Start the tunnel tunnel.
+    /// - Parameters:
+    ///   - tunnelConfiguration: tunnel configuration.
+    ///   - completionHandler: completion handler.
+    public func start(tunnelConfiguration: TunnelConfiguration, completionHandler: @escaping (WireGuardAdapterError?) -> Void) {
+        startMultihop(exitConfiguration: tunnelConfiguration, entryConfiguration: nil, completionHandler: completionHandler)
     }
 
     /// Stop the tunnel.
@@ -289,9 +295,10 @@ public class WireGuardAdapter {
                 }
 
                 let (wgConfig, resolutionResults) = settingsGenerator.uapiConfiguration()
+                let (entryConfig, _) = settingsGenerator.entryUapiConfiguration() ?? (nil, [])
                 self.logEndpointResolutionResults(resolutionResults)
 
-                wgSetConfig(handle, wgConfig)
+                wgSetConfig(handle, wgConfig, entryConfig)
                 #if os(iOS)
                 wgDisableSomeRoamingForBrokenMobileSemantics(handle)
                 #endif
@@ -408,12 +415,16 @@ public class WireGuardAdapter {
     /// - Parameter wgConfig: WireGuard configuration
     /// - Throws: an error of type `WireGuardAdapterError`
     /// - Returns: tunnel handle
-    private func startWireGuardBackend(wgConfig: String) throws -> Int32 {
+    private func startWireGuardBackend(exitWgConfig: String, entryWgConfig: String? = nil) throws -> Int32 {
         guard let tunnelFileDescriptor = self.tunnelFileDescriptor else {
             throw WireGuardAdapterError.cannotLocateTunnelFileDescriptor
         }
 
-        let handle = wgTurnOn(wgConfig, tunnelFileDescriptor)
+        let handle = if let entryWgConfig {
+            wgTurnOnMultihop(exitWgConfig, entryWgConfig, tunnelFileDescriptor)
+        } else {
+            wgTurnOn(exitWgConfig, tunnelFileDescriptor)
+        }
         if handle < 0 {
             throw WireGuardAdapterError.startWireGuardBackend(handle)
         }
@@ -424,13 +435,22 @@ public class WireGuardAdapter {
     }
 
     /// Resolves the hostnames in the given tunnel configuration and return settings generator.
-    /// - Parameter tunnelConfiguration: an instance of type `TunnelConfiguration`.
+    /// - Parameter exitConfiguration: an instance of type `TunnelConfiguration`.
+    /// - Parameter entryConfiguration: an optional instance of type `TunnelConfiguration` for the entry WireGuard device
     /// - Throws: an error of type `WireGuardAdapterError`.
     /// - Returns: an instance of type `PacketTunnelSettingsGenerator`.
-    private func makeSettingsGenerator(with tunnelConfiguration: TunnelConfiguration) throws -> PacketTunnelSettingsGenerator {
+    private func makeSettingsGenerator(with exitConfiguration: TunnelConfiguration, entryConfiguration: TunnelConfiguration? = nil) throws -> PacketTunnelSettingsGenerator {
+        let resolvedExitEndpoints = try self.resolvePeers(for: exitConfiguration)
+        
+        var entry: DeviceConfiguration? = nil
+        if let entryConfiguration {
+            let resolvedEntryEndpoints = try self.resolvePeers(for: entryConfiguration)
+            entry = DeviceConfiguration(configuration: entryConfiguration, resolvedEndpoints: resolvedEntryEndpoints)
+        }
+        
         return PacketTunnelSettingsGenerator(
-            tunnelConfiguration: tunnelConfiguration,
-            resolvedEndpoints: try self.resolvePeers(for: tunnelConfiguration)
+            exit: DeviceConfiguration(configuration: exitConfiguration, resolvedEndpoints: resolvedExitEndpoints),
+            entry: entry
         )
     }
 
@@ -496,7 +516,7 @@ public class WireGuardAdapter {
                 let (wgConfig, resolutionResults) = settingsGenerator.endpointUapiConfiguration()
                 self.logEndpointResolutionResults(resolutionResults)
 
-                wgSetConfig(handle, wgConfig)
+                wgSetConfig(handle, wgConfig, nil)
                 wgDisableSomeRoamingForBrokenMobileSemantics(handle)
                 wgBumpSockets(handle)
             } else {
@@ -518,7 +538,7 @@ public class WireGuardAdapter {
                 self.logEndpointResolutionResults(resolutionResults)
 
                 self.state = .started(
-                    try self.startWireGuardBackend(wgConfig: wgConfig),
+                    try self.startWireGuardBackend(exitWgConfig: wgConfig),
                     settingsGenerator
                 )
             } catch {
