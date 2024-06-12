@@ -19,6 +19,17 @@ public final class TunnelConfiguration {
             fatalError("Two or more peers cannot have the same public key")
         }
     }
+    
+    // TODO: Remove this function, it's a hack to test multihop
+    public func copyWithDifferentPeer(publicKey: PublicKey, ip: String) -> TunnelConfiguration {
+        let interface = self.interface
+        let name = self.name
+        let port = self.peers[0].endpoint?.port ?? 51820
+        var peer = PeerConfiguration(publicKey: publicKey)
+        peer.endpoint = Endpoint(from: "\(ip):\(port)")
+        peer.allowedIPs = self.peers[0].allowedIPs
+        return Self(name: name, interface: interface, peers: [peer])
+    }
 }
 
 extension TunnelConfiguration: Equatable {
