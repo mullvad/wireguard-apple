@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"net"
 	"net/netip"
 	"strings"
 
