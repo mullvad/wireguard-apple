@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"io"
 	"net/netip"
 	"strings"
 
@@ -75,7 +76,7 @@ func NewNetstackBind(net *netstack.Net, localAddr netip.AddrPort, peerEndpoint n
 
 // BatchSize implements conn.Bind.
 func (*NetstackBind) BatchSize() int {
-	return 128
+	return 32
 }
 
 // Close implements conn.Bind.
@@ -101,18 +102,74 @@ func (b *NetstackBind) Open(port uint16) (fns []conn.ReceiveFunc, actualPort uin
 			return
 		}
 
-		bytesRead, err := listener.Read(packets[0])
-		// TODO: when returning an EOF error, make sure it makes WG-GO stop retrying
+		readBuffers := make(chan []byte, b.BatchSize())
+		type readResult struct {
+			buffer    []byte
+			bytesRead int
+			err       error
+		}
+		readCh := make(chan readResult)
+		for idx := 0; idx < b.BatchSize()-1; idx++ {
+			readBuffers <- make([]byte, 1600)
+		}
+
+		go func() {
+			for {
+				defer close(readCh)
+				buffer := <-readBuffers
+
+				bytesRead, err := listener.Read(buffer)
+				// TODO: when returning an EOF error, make sure it makes WG-GO stop retrying
+				if err == io.EOF {
+					return
+				}
+				readCh <- readResult{
+					buffer,
+					bytesRead,
+					err,
+				}
+
+			}
+		}()
+
 		if err != nil {
 			return 0, err
 		}
 
-		eps[0] = &NetstackBindAddr{remoteEndpoint: &b.remoteEndpoint, localEndpoint: &b.localEndpoint}
-		sizes[0] = bytesRead
-		if err == nil {
-			n = 1
+		result, ok := <-readCh
+		if !ok {
+			return 0, io.EOF
 		}
+		if result.err != nil {
+			err = result.err
+			readBuffers <- result.buffer
+			return
+		}
+		n += 1
+		copy(packets[0], result.buffer[:result.bytesRead])
+		sizes[0] = result.bytesRead
+		eps[0] = &NetstackBindAddr{remoteEndpoint: &b.remoteEndpoint, localEndpoint: &b.localEndpoint}
+		readBuffers <- result.buffer
 
+		for idx := range packets[1:] {
+			select {
+			case result := <-readCh:
+				if result.err != nil {
+					err = result.err
+					readBuffers <- result.buffer
+					return
+				}
+				n += 1
+				copy(packets[idx], result.buffer[:result.bytesRead])
+				sizes[idx] = result.bytesRead
+				eps[idx] = &NetstackBindAddr{remoteEndpoint: &b.remoteEndpoint, localEndpoint: &b.localEndpoint}
+				readBuffers <- result.buffer
+
+			default:
+				b.logger.Verbosef("FInished reading after receiving %v packets", idx+1)
+				return
+			}
+		}
 		return
 	}
 
