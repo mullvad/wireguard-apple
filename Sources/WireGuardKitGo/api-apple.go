@@ -16,6 +16,7 @@ import "C"
 import (
 	"fmt"
 	"math"
+	"math/rand"
 	"net/netip"
 	"os"
 	"os/signal"
@@ -86,8 +87,69 @@ func wgSetLogger(context, loggerFn uintptr) {
 	loggerFunc = unsafe.Pointer(loggerFn)
 }
 
+func wgTurnOnMultihopInner(tun tun.Device, exitSettings *C.char, entrySettings *C.char, privateIp *C.char, exitMtu int, logger *device.Logger) int32 {
+	ip, err := netip.ParseAddr(C.GoString(privateIp))
+	if err != nil {
+		logger.Errorf("Failed to parse private IP: %v", err)
+		tun.Close()
+		return -5
+	}
+
+	vtun, virtualNet, err := netstack.CreateNetTUN([]netip.Addr{ip}, []netip.Addr{}, exitMtu)
+	if err != nil {
+		logger.Errorf("Failed to create new virtual tunnel: %v", err)
+		tun.Close()
+		return -6
+	}
+
+	exitConfigString := C.GoString(exitSettings)
+	exitEndpoint := parseEndpointFromGoConfig(exitConfigString)
+	if exitEndpoint == nil {
+		tun.Close()
+		return -7
+	}
+
+	port := uint16(rand.Uint32() >> 16)
+	localAddr := netip.AddrPortFrom(ip, port)
+	virtualBind := NewNetstackBind(virtualNet, localAddr, *exitEndpoint, logger)
+
+	exitDev := device.NewDevice(tun, &virtualBind, logger)
+	entryDev := device.NewDevice(vtun, conn.NewStdNetBind(), logger)
+
+	err = entryDev.IpcSet(C.GoString(entrySettings))
+	if err != nil {
+		logger.Errorf("Unable to set IPC settings for entry: %v", err)
+		tun.Close()
+		return -8
+	}
+
+	err = exitDev.IpcSet(exitConfigString)
+	if err != nil {
+		logger.Errorf("Unable to set IPC settings for exit: %v", err)
+		tun.Close()
+		return -9
+	}
+
+	exitDev.Up()
+	entryDev.Up()
+	logger.Verbosef("Device started")
+
+	var i int32
+	for i = 0; i < math.MaxInt32; i++ {
+		if _, exists := tunnelHandles[i]; !exists {
+			break
+		}
+	}
+	if i == math.MaxInt32 {
+		tun.Close()
+		return -10
+	}
+	tunnelHandles[i] = tunnelHandle{exitDev, entryDev, logger, virtualNet}
+	return i
+}
+
 //export wgTurnOnMultihop
-func wgTurnOnMultihop(exitSettings *C.char, entrySettings *C.char, privateIp *C.char, tunFd int32, exitMtu int32) int32 {
+func wgTurnOnMultihop(exitSettings *C.char, entrySettings *C.char, privateIp *C.char, tunFd int32) int32 {
 	logger := &device.Logger{
 		Verbosef: CLogger(0).Printf,
 		Errorf:   CLogger(1).Printf,
@@ -112,59 +174,13 @@ func wgTurnOnMultihop(exitSettings *C.char, entrySettings *C.char, privateIp *C.
 		return -4
 	}
 
-	ip, err := netip.ParseAddr(C.GoString(privateIp))
+	exitMtu, err := tun.MTU()
 	if err != nil {
-		logger.Errorf("Failed to parse private IP: %v", err)
 		return -5
 	}
 
-	vtun, virtualNet, err := netstack.CreateNetTUN([]netip.Addr{ip}, []netip.Addr{}, int(exitMtu))
-	if err != nil {
-		logger.Errorf("Failed to create new virtual tunnel: %v", err)
-		return -6
-	}
+	return wgTurnOnMultihopInner(tun, exitSettings, entrySettings, privateIp, exitMtu, logger)
 
-	exitConfigString := C.GoString(exitSettings)
-	exitEndpoint := parseEndpointFromGoConfig(exitConfigString)
-	if exitEndpoint == nil {
-		return -7
-	}
-
-	virtualBind := NewNetstackBind(virtualNet, *exitEndpoint, logger)
-
-	exitDev := device.NewDevice(tun, &virtualBind, logger)
-	entryDev := device.NewDevice(vtun, conn.NewStdNetBind(), logger)
-
-	err = entryDev.IpcSet(C.GoString(entrySettings))
-	if err != nil {
-		logger.Errorf("Unable to set IPC settings: %v", err)
-		unix.Close(dupTunFd)
-		return -8
-	}
-
-	err = exitDev.IpcSet(exitConfigString)
-	if err != nil {
-		logger.Errorf("Unable to set IPC settings: %v", err)
-		unix.Close(dupTunFd)
-		return -9
-	}
-
-	exitDev.Up()
-	entryDev.Up()
-	logger.Verbosef("Device started")
-
-	var i int32
-	for i = 0; i < math.MaxInt32; i++ {
-		if _, exists := tunnelHandles[i]; !exists {
-			break
-		}
-	}
-	if i == math.MaxInt32 {
-		unix.Close(dupTunFd)
-		return -10
-	}
-	tunnelHandles[i] = tunnelHandle{exitDev, entryDev, logger, virtualNet}
-	return i
 }
 
 //export wgTurnOn

@@ -2,8 +2,6 @@ package main
 
 import (
 	"bufio"
-	"errors"
-	"fmt"
 	"net"
 	"net/netip"
 	"strings"
@@ -16,14 +14,15 @@ import (
 
 type NetstackBind struct {
 	*netstack.Net
-	socket       *gonet.UDPConn
-	peerEndpoint net.UDPAddr
-	logger       *device.Logger
+	socket         *gonet.UDPConn
+	localEndpoint  netip.AddrPort
+	remoteEndpoint netip.AddrPort
+	logger         *device.Logger
 }
 
 type NetstackBindAddr struct {
-	remoteEndpoint *net.UDPAddr
-	localEndpoint  *net.UDPAddr
+	remoteEndpoint *netip.AddrPort
+	localEndpoint  *netip.AddrPort
 }
 
 // ClearSrc implements conn.Endpoint.
@@ -33,12 +32,12 @@ func (a *NetstackBindAddr) ClearSrc() {
 
 // DstIP implements conn.Endpoint.
 func (a *NetstackBindAddr) DstIP() netip.Addr {
-	return a.remoteEndpoint.AddrPort().Addr()
+	return a.remoteEndpoint.Addr()
 }
 
 // DstToBytes implements conn.Endpoint.
 func (a *NetstackBindAddr) DstToBytes() []byte {
-	b, _ := a.remoteEndpoint.AddrPort().MarshalBinary()
+	b, _ := a.remoteEndpoint.MarshalBinary()
 	return b
 }
 
@@ -49,7 +48,14 @@ func (a *NetstackBindAddr) DstToString() string {
 
 // SrcIP implements conn.Endpoint.
 func (a *NetstackBindAddr) SrcIP() netip.Addr {
-	return a.remoteEndpoint.AddrPort().Addr()
+	if a.localEndpoint == nil {
+		if a.remoteEndpoint != nil && a.remoteEndpoint.Addr().Is6() {
+			return netip.IPv6Unspecified()
+		} else {
+			return netip.IPv4Unspecified()
+		}
+	}
+	return a.localEndpoint.Addr()
 }
 
 // SrcToString implements conn.Endpoint.
@@ -57,10 +63,11 @@ func (a *NetstackBindAddr) SrcToString() string {
 	return a.localEndpoint.String()
 }
 
-func NewNetstackBind(net *netstack.Net, peerEndpoint net.UDPAddr, logger *device.Logger) NetstackBind {
+func NewNetstackBind(net *netstack.Net, localAddr netip.AddrPort, peerEndpoint netip.AddrPort, logger *device.Logger) NetstackBind {
 	return NetstackBind{
 		net,
 		nil,
+		localAddr,
 		peerEndpoint,
 		logger,
 	}
@@ -83,56 +90,52 @@ func (b *NetstackBind) Close() error {
 // Open implements conn.Bind.
 func (b *NetstackBind) Open(port uint16) (fns []conn.ReceiveFunc, actualPort uint16, err error) {
 
-	bindAddr := netip.AddrPortFrom(netip.IPv4Unspecified(), port)
-	listener, err := b.ListenUDPAddrPort(bindAddr)
+	listener, err := b.DialUDPAddrPort(b.localEndpoint, b.remoteEndpoint)
 	if err != nil {
 		return []conn.ReceiveFunc{}, 0, err
 	}
 
-	listenAddr := listener.LocalAddr().(*net.UDPAddr)
-	b.logger.Verbosef("Opened local socket with addr %v", listenAddr)
-
 	b.socket = listener
 
 	recvFunc := func(packets [][]byte, sizes []int, eps []conn.Endpoint) (n int, err error) {
-		b.logger.Verbosef("Reading from local socket %v", listenAddr)
 		if len(packets) == 0 {
 			return
 		}
-		bytesRead, addr, err := listener.ReadFrom(packets[0])
-		udpAddr, ok := addr.(*net.UDPAddr)
-		if !ok {
-			return 0, errors.New(fmt.Sprintf("Unrecognized UDP addr: %v", addr))
-		}
-		eps[0] = &NetstackBindAddr{remoteEndpoint: udpAddr, localEndpoint: listenAddr}
-		sizes[0] = bytesRead
+
+		bytesRead, err := listener.Read(packets[0])
 		if err != nil {
+			return 0, err
+		}
+
+		eps[0] = &NetstackBindAddr{remoteEndpoint: &b.remoteEndpoint, localEndpoint: &b.localEndpoint}
+		sizes[0] = bytesRead
+		if err == nil {
 			n = 1
 		}
+
 		return
 	}
 
-	return []conn.ReceiveFunc{recvFunc}, uint16(listenAddr.Port), nil
+	return []conn.ReceiveFunc{recvFunc}, uint16(b.localEndpoint.Port()), nil
 }
 
 // ParseEndpoint implements conn.Bind.
 func (*NetstackBind) ParseEndpoint(s string) (conn.Endpoint, error) {
-	addr, err := net.ResolveUDPAddr("udp", s)
+	addr, err := netip.ParseAddrPort(s)
 	if err != nil {
 		return nil, err
 	}
 
-	return &NetstackBindAddr{remoteEndpoint: addr}, nil
+	return &NetstackBindAddr{remoteEndpoint: &addr}, nil
 }
 
 // Send implements conn.Bind.
 // Endpoint argument is ignored, the endpoint is known ahead of time anyway.
 func (b *NetstackBind) Send(bufs [][]byte, ep conn.Endpoint) (err error) {
-	b.logger.Verbosef("AYYO Sending to %v", ep)
 	for idx := range bufs {
-		_, err = b.socket.WriteTo(bufs[idx], &b.peerEndpoint)
+		_, err = b.socket.Write(bufs[idx])
 		if err != nil {
-			b.logger.Verbosef("Failed to send to %v: %v", ep, err)
+			return
 		}
 	}
 	return
@@ -146,7 +149,7 @@ func (*NetstackBind) SetMark(mark uint32) error {
 
 // Parse a wireguard config and return the first endpoint address it finds and
 // parses successfully.
-func parseEndpointFromGoConfig(config string) *net.UDPAddr {
+func parseEndpointFromGoConfig(config string) *netip.AddrPort {
 	scanner := bufio.NewScanner(strings.NewReader(config))
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -156,9 +159,9 @@ func parseEndpointFromGoConfig(config string) *net.UDPAddr {
 		}
 
 		if key == "endpoint" {
-			endpoint, err := net.ResolveUDPAddr("udp", value)
-			if err == nil && endpoint != nil {
-				return endpoint
+			endpoint, err := netip.ParseAddrPort(value)
+			if err == nil {
+				return &endpoint
 			}
 		}
 
