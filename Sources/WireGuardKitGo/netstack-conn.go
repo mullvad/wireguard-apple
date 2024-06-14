@@ -75,7 +75,7 @@ func NewNetstackBind(net *netstack.Net, localAddr netip.AddrPort, peerEndpoint n
 
 // BatchSize implements conn.Bind.
 func (*NetstackBind) BatchSize() int {
-	return 1
+	return 128
 }
 
 // Close implements conn.Bind.
