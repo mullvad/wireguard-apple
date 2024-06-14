@@ -102,6 +102,7 @@ func (b *NetstackBind) Open(port uint16) (fns []conn.ReceiveFunc, actualPort uin
 		}
 
 		bytesRead, err := listener.Read(packets[0])
+		// TODO: when returning an EOF error, make sure it makes WG-GO stop retrying
 		if err != nil {
 			return 0, err
 		}
