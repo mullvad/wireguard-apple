@@ -27,6 +27,7 @@ public final class TunnelConfiguration {
         let port = self.peers[0].endpoint?.port ?? 51820
         var peer = PeerConfiguration(publicKey: publicKey)
         peer.endpoint = Endpoint(from: "\(ip):\(port)")
+        peer.allowedIPs = self.peers[0].allowedIPs
         return Self(name: name, interface: interface, peers: [peer])
     }
 }

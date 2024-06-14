@@ -427,7 +427,7 @@ public class WireGuardAdapter {
         }
 
         let handle = if let entryWgConfig {
-            wgTurnOnMultihop(exitWgConfig, entryWgConfig, privateIp, tunnelFileDescriptor, Int32(mtu))
+            wgTurnOnMultihop(exitWgConfig, entryWgConfig, privateIp, tunnelFileDescriptor)
         } else {
             wgTurnOn(exitWgConfig, tunnelFileDescriptor)
         }
