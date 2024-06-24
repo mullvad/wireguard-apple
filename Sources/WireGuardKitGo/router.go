@@ -143,17 +143,17 @@ func getPacketHeaderData4(packet []byte, isIncoming bool) PacketHeaderData {
 func getPacketHeaderData6(packet []byte, isIncoming bool) PacketHeaderData {
 	var destAddress netip.Addr
 	var srcPort, destPort uint16
-	nextHeader := packet[6]
+	protocol := packet[6]
 	if isIncoming {
 		destAddress = netip.AddrFrom16(*((*[16]byte)(packet[8:24])))
-		destPort, srcPort = getPorts(nextHeader, packet[40:])
+		destPort, srcPort = getPorts(protocol, packet[40:])
 	} else {
 		destAddress = netip.AddrFrom16(*((*[16]byte)(packet[24:40])))
-		srcPort, destPort = getPorts(nextHeader, packet[40:])
+		srcPort, destPort = getPorts(protocol, packet[40:])
 	}
 	// TODO: skip the chain of IPv6 extension headers to get to the ports.
 	// For now, we just ignore them and assume no ports if there are extension headers
-	return PacketHeaderData{nextHeader, srcPort, destAddress, destPort}
+	return PacketHeaderData{protocol, srcPort, destAddress, destPort}
 }
 
 func fillPacketHeaderData(packet []byte, packetHeaderData *PacketHeaderData, isIncoming bool) bool {
