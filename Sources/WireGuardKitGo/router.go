@@ -13,6 +13,10 @@ import (
 )
 
 const maxOffset = 128
+
+// how many buffers we should preallocate.
+// Currently, WireGuardGo sends buffers one at a time, so this is 1, though the API says that
+// this is not set in stone.
 const expectedBufferCount = 1
 
 type PacketBatch struct {
@@ -21,13 +25,16 @@ type PacketBatch struct {
 	isVirtual bool
 }
 
-// returns the overflow
-func (pb *PacketBatch) truncate(headsize int, make_batch func() *PacketBatch) *PacketBatch {
+// truncate a PacketBatch to a maximum size, allocating and returning a new PacketBatch to
+// hold the overflow if needed.  The function for allocating the batch is injected, to decouple
+// this from specific memory management methods (such as the use of a Pool, as in practice, or
+// simple allocation, as in tests)
+func (pb *PacketBatch) truncate(headsize int, makeBatch func() *PacketBatch) *PacketBatch {
 	overflowSize := len(pb.packets) - headsize
 	if overflowSize <= 0 {
 		return nil
 	}
-	overflow := make_batch()
+	overflow := makeBatch()
 	overflow.packets = pb.packets[headsize:]
 	overflow.sizes = pb.sizes[headsize:]
 	overflow.isVirtual = pb.isVirtual
