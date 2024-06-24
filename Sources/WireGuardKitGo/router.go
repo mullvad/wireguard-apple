@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/base64"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -59,15 +58,15 @@ func (r *Router) BatchSize() int {
 // Close implements tun.Device.
 func (r *Router) Close() error {
 	// TODO: anything else we need to shut down here
+	// This is doubled to shut down both readWorker goroutines
 	r.rxShutdown <- struct{}{}
 	r.rxShutdown <- struct{}{}
 	err1 := r.real.Close()
 	err2 := r.virtual.Close()
 	if err1 != nil {
 		return err1
-	} else {
-		return err2
 	}
+	return err2
 }
 
 // Events implements tun.Device.
@@ -97,22 +96,14 @@ type PacketHeaderData struct {
 	destPort   uint16
 }
 
-// type (1 byte) + padding (1 byte) + src port (2 bytes) + dest addr + dest port
+// protocol (1 byte) + padding (1 byte) + src port (2 bytes) + dest addr (16 bytes, some possibly unused) + dest port
 type PacketIdentifier [22]byte
-
-func humanReadableForm(pi PacketIdentifier) string {
-	str := ""
-	str += fmt.Sprintf("%02X%02X-", pi[0], pi[1])
-	str += fmt.Sprintf(":%02X%02X-", pi[2], pi[3])
-	str += base64.StdEncoding.EncodeToString(pi[4:20])
-	str += fmt.Sprintf(":%02X%02X-", pi[20], pi[21])
-	return str
-}
 
 func (pi PacketHeaderData) asPacketIdentifier() PacketIdentifier {
 	result := PacketIdentifier{}
 	destAddrBytes := pi.destAddr.As16()
 	result[0] = pi.protocol
+	result[1] = 0
 	copy(result[4:], destAddrBytes[:])
 	binary.BigEndian.PutUint16(result[2:], pi.sourcePort)
 	binary.BigEndian.PutUint16(result[20:], pi.destPort)
@@ -165,8 +156,7 @@ func getPacketHeaderData6(packet []byte, isIncoming bool) PacketHeaderData {
 	return PacketHeaderData{nextHeader, srcPort, destAddress, destPort}
 }
 
-func fillPacketHeaderData(packet []byte, packetHeaderData *PacketHeaderData, offset int, isIncoming bool) bool {
-	packet = packet[offset:]
+func fillPacketHeaderData(packet []byte, packetHeaderData *PacketHeaderData, isIncoming bool) bool {
 	ipVersion := (packet[0] >> 4) & 0x0f
 	switch ipVersion {
 	case 4:
@@ -214,7 +204,7 @@ func (r *Router) Read(bufs [][]byte, sizes []int, offset int) (n int, err error)
 		copy(bufs[packetIndex][offset:], packets.packets[packetIndex][maxOffset:])
 		sizes[packetIndex] = packets.sizes[packetIndex]
 
-		if packets.isVirtual && fillPacketHeaderData(bufs[packetIndex], &headerData, offset, false) {
+		if packets.isVirtual && fillPacketHeaderData(bufs[packetIndex][offset:], &headerData, false) {
 			r.setVirtualRoute(headerData)
 		}
 	}
@@ -246,7 +236,7 @@ func (r *Router) Write(bufs [][]byte, offset int) (int, error) {
 
 	for packetIdx, packetRef := range bufs {
 		isVirtual := false
-		if fillPacketHeaderData(packetRef, &headerData, offset, true) {
+		if fillPacketHeaderData(packetRef[offset:], &headerData, true) {
 			identifier := headerData.asPacketIdentifier()
 			_, isVirtual = r.virtualRoutes[identifier]
 		}
@@ -293,6 +283,7 @@ func (r *Router) readWorker(device tun.Device, isVirtual bool) {
 		batch := r.batchPool.Get().(*PacketBatch)
 		_, err := device.Read(batch.packets, batch.sizes, maxOffset)
 		if err != nil {
+			r.batchPool.Put(batch)
 			return
 		}
 		batch.isVirtual = isVirtual
