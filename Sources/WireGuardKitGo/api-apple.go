@@ -122,7 +122,7 @@ func wgTurnOn(settings *C.char, tunFd int32) int32 {
 	logger.Verbosef("Device started")
 
 	var i int32
-	for i = 0; i < math.MaxInt32; i++ {
+	for i = 1; i < math.MaxInt32; i++ {
 		if _, exists := tunnelHandles[i]; !exists {
 			break
 		}
