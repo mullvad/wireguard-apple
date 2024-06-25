@@ -349,6 +349,7 @@ func newRouterRead(real, virtual tun.Device, virtualRouteChan chan PacketIdentif
 				return batch
 			},
 		},
+	}
 	go result.readWorker(real, false)
 	go result.readWorker(virtual, true)
 	result.waitGroup.Add(2)
