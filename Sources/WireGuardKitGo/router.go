@@ -26,7 +26,6 @@ const defaultOffset = 4
 // this is not set in stone.
 const expectedBufferCount = conn.IdealBatchSize
 
-
 type PacketBatch struct {
 	packets   [][]byte
 	sizes     []int
