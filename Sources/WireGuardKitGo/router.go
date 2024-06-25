@@ -236,8 +236,6 @@ func (r *Router) Write(bufs [][]byte, offset int) (int, error) {
 	r.updateVirtualRoutes()
 
 	headerData := PacketHeaderData{}
-	// realPackets := initializeWritePacketBuffer(len(bufs))
-	// virtualPackets := initializeWritePacketBuffer(len(bufs))
 	r.writeRealPackets = r.writeRealPackets[:0]
 	r.writeVirtualPackets = r.writeVirtualPackets[:0]
 
@@ -255,19 +253,22 @@ func (r *Router) Write(bufs [][]byte, offset int) (int, error) {
 		}
 	}
 
-	rw := 0
-	vw := 0
+	realWritten := 0
+	virtualWritten := 0
 	var err error
 	if len(r.writeRealPackets) > 0 {
-		rw, err = r.real.Write(r.writeRealPackets, offset)
+		realWritten, err = r.real.Write(r.writeRealPackets, offset)
 	}
-	if rw < len(r.writeRealPackets) || err != nil {
-		return rw, err
+	if realWritten < len(r.writeRealPackets) || err != nil {
+		return realWritten, err
 	}
 	if len(r.writeVirtualPackets) > 0 {
-		vw, err = r.virtual.Write(r.writeVirtualPackets, offset)
+		virtualWritten, err = r.virtual.Write(r.writeVirtualPackets, offset)
 	}
-	return rw + vw, err
+	if err != nil {
+		virtualWritten = 0
+	}
+	return realWritten + virtualWritten, err
 }
 
 func initializeReadPacketBuffer(size int) [][]byte {
