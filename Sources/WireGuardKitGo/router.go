@@ -10,14 +10,17 @@ import (
 
 	"golang.zx2c4.com/wireguard/conn"
 	"golang.zx2c4.com/wireguard/tun"
+	"gvisor.dev/gvisor/pkg/tcpip"
+	"gvisor.dev/gvisor/pkg/tcpip/header"
 )
 
+// the number of bytes to allocate before the start of each packet to allow for offsets
 const maxOffset = 128
 
 // how many buffers we should preallocate.
 // Currently, WireGuardGo sends buffers one at a time, so this is 1, though the API says that
 // this is not set in stone.
-const expectedBufferCount = 1
+const expectedBufferCount = conn.IdealBatchSize
 
 type PacketBatch struct {
 	packets   [][]byte
@@ -29,17 +32,17 @@ type PacketBatch struct {
 // hold the overflow if needed.  The function for allocating the batch is injected, to decouple
 // this from specific memory management methods (such as the use of a Pool, as in practice, or
 // simple allocation, as in tests)
-func (pb *PacketBatch) truncate(headsize int, makeBatch func() *PacketBatch) *PacketBatch {
-	overflowSize := len(pb.packets) - headsize
-	if overflowSize <= 0 {
+func (pb *PacketBatch) truncate(limit int, makeBatch func() *PacketBatch) *PacketBatch {
+	excess := len(pb.packets) - limit
+	if excess <= 0 {
 		return nil
 	}
 	overflow := makeBatch()
-	overflow.packets = pb.packets[headsize:]
-	overflow.sizes = pb.sizes[headsize:]
+	overflow.packets = pb.packets[limit:]
+	overflow.sizes = pb.sizes[limit:]
 	overflow.isVirtual = pb.isVirtual
-	pb.packets = pb.packets[:headsize]
-	pb.sizes = pb.sizes[:headsize]
+	pb.packets = pb.packets[:limit]
+	pb.sizes = pb.sizes[:limit]
 	return overflow
 }
 
@@ -70,6 +73,7 @@ func (r *Router) Close() error {
 	r.rxShutdown <- struct{}{}
 	err1 := r.real.Close()
 	err2 := r.virtual.Close()
+	r.readerWaitGroup.Wait()
 	if err1 != nil {
 		return err1
 	}
@@ -97,7 +101,7 @@ func (r *Router) Name() (string, error) {
 }
 
 type PacketHeaderData struct {
-	protocol   byte
+	protocol   tcpip.TransportProtocolNumber
 	sourcePort uint16
 	destAddr   netip.Addr
 	destPort   uint16
@@ -109,7 +113,7 @@ type PacketIdentifier [22]byte
 func (pi PacketHeaderData) asPacketIdentifier() PacketIdentifier {
 	result := PacketIdentifier{}
 	destAddrBytes := pi.destAddr.As16()
-	result[0] = pi.protocol
+	result[0] = uint8(pi.protocol)
 	result[1] = 0
 	copy(result[4:], destAddrBytes[:])
 	binary.BigEndian.PutUint16(result[2:], pi.sourcePort)
@@ -117,26 +121,23 @@ func (pi PacketHeaderData) asPacketIdentifier() PacketIdentifier {
 	return result
 }
 
-const ProtocolICMP = 1
-const ProtocolTCP = 6
-const ProtocolUDP = 17
-
-func getPorts(protocol byte, protocolHeader []byte) (uint16, uint16) {
+func getPorts(protocol tcpip.TransportProtocolNumber, protocolHeader []byte) (srcPort uint16, destPort uint16) {
 	switch protocol {
-	case ProtocolTCP:
-		return uint16(protocolHeader[1]) | uint16(protocolHeader[0])<<8, uint16(protocolHeader[3]) | uint16(protocolHeader[2])<<8
-	case ProtocolUDP:
+	case header.TCPProtocolNumber, header.UDPProtocolNumber:
 		return uint16(protocolHeader[1]) | uint16(protocolHeader[0])<<8, uint16(protocolHeader[3]) | uint16(protocolHeader[2])<<8
 	default:
 		return 0, 0
 	}
 }
 
-func getPacketHeaderData4(packet []byte, isIncoming bool) PacketHeaderData {
+func fillPacketHeaderData4(packet []byte, packetHeaderData *PacketHeaderData, isIncoming bool) bool {
 	var destAddress netip.Addr
 	var srcPort, destPort uint16
-	headerLength := (packet[0] & 0xff) * 4
-	protocol := packet[9]
+	headerLength := int(packet[0]) * 4
+	if len(packet) < headerLength+4 {
+		return false
+	}
+	protocol := tcpip.TransportProtocolNumber(packet[9])
 	if isIncoming {
 		destAddress = netip.AddrFrom4(*((*[4]byte)(packet[12:16])))
 		destPort, srcPort = getPorts(protocol, packet[headerLength:])
@@ -144,13 +145,17 @@ func getPacketHeaderData4(packet []byte, isIncoming bool) PacketHeaderData {
 		destAddress = netip.AddrFrom4(*((*[4]byte)(packet[16:20])))
 		srcPort, destPort = getPorts(protocol, packet[headerLength:])
 	}
-	return PacketHeaderData{protocol, srcPort, destAddress, destPort}
+	*packetHeaderData = PacketHeaderData{protocol, srcPort, destAddress, destPort}
+	return true
 }
 
-func getPacketHeaderData6(packet []byte, isIncoming bool) PacketHeaderData {
+func fillPacketHeaderData6(packet []byte, packetHeaderData *PacketHeaderData, isIncoming bool) bool {
 	var destAddress netip.Addr
 	var srcPort, destPort uint16
-	protocol := packet[6]
+	if len(packet) < 44 {
+		return false
+	}
+	protocol := tcpip.TransportProtocolNumber(packet[6])
 	if isIncoming {
 		destAddress = netip.AddrFrom16(*((*[16]byte)(packet[8:24])))
 		destPort, srcPort = getPorts(protocol, packet[40:])
@@ -160,18 +165,17 @@ func getPacketHeaderData6(packet []byte, isIncoming bool) PacketHeaderData {
 	}
 	// TODO: skip the chain of IPv6 extension headers to get to the ports.
 	// For now, we just ignore them and assume no ports if there are extension headers
-	return PacketHeaderData{protocol, srcPort, destAddress, destPort}
+	*packetHeaderData = PacketHeaderData{protocol, srcPort, destAddress, destPort}
+	return true
 }
 
 func fillPacketHeaderData(packet []byte, packetHeaderData *PacketHeaderData, isIncoming bool) bool {
 	ipVersion := (packet[0] >> 4) & 0x0f
 	switch ipVersion {
 	case 4:
-		*packetHeaderData = getPacketHeaderData4(packet, isIncoming)
-		return true
+		return fillPacketHeaderData4(packet, packetHeaderData, isIncoming)
 	case 6:
-		*packetHeaderData = getPacketHeaderData6(packet, isIncoming)
-		return true
+		return fillPacketHeaderData6(packet, packetHeaderData, isIncoming)
 	default:
 		return false
 	}
@@ -189,34 +193,34 @@ func (r *Router) Read(bufs [][]byte, sizes []int, offset int) (n int, err error)
 	if offset > maxOffset {
 		return 0, fmt.Errorf("illegal offset %d > %d", offset, maxOffset)
 	}
-	var packets *PacketBatch
+	var packetBatch *PacketBatch
 	if r.overflow != nil {
-		packets = r.overflow
+		packetBatch = r.overflow
 		r.overflow = nil
 	} else {
 		var ok bool
-		packets, ok = <-r.rxChannel
+		packetBatch, ok = <-r.rxChannel
 		if !ok {
 			return 0, errors.New("reader shut down")
 		}
 	}
 	defer func() {
-		r.batchPool.Put(packets)
+		r.batchPool.Put(packetBatch)
 	}()
 
-	r.overflow = packets.truncate(len(bufs), func() *PacketBatch { return r.batchPool.Get().(*PacketBatch) })
+	r.overflow = packetBatch.truncate(len(bufs), func() *PacketBatch { return r.batchPool.Get().(*PacketBatch) })
 	headerData := PacketHeaderData{}
-	for packetIndex := range packets.packets {
+	for packetIndex := range packetBatch.packets {
 
-		copy(bufs[packetIndex][offset:], packets.packets[packetIndex][maxOffset:])
-		sizes[packetIndex] = packets.sizes[packetIndex]
+		copy(bufs[packetIndex][offset:], packetBatch.packets[packetIndex][maxOffset:])
+		sizes[packetIndex] = packetBatch.sizes[packetIndex]
 
-		if packets.isVirtual && fillPacketHeaderData(bufs[packetIndex][offset:], &headerData, false) {
+		if packetBatch.isVirtual && fillPacketHeaderData(bufs[packetIndex][offset:], &headerData, false) {
 			r.setVirtualRoute(headerData)
 		}
 	}
 
-	return len(packets.packets), nil
+	return len(packetBatch.packets), nil
 }
 
 func (r *Router) updateVirtualRoutes() {
@@ -274,7 +278,7 @@ func (r *Router) Write(bufs [][]byte, offset int) (int, error) {
 func initializeReadPacketBuffer(size int) [][]byte {
 	buffer := make([][]byte, size, size)
 	for idx := range buffer {
-		buffer[idx] = make([]byte, 1500+maxOffset)
+		buffer[idx] = make([]byte, 0x10000+maxOffset)
 	}
 
 	return buffer

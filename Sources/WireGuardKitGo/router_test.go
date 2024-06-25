@@ -469,7 +469,7 @@ func TestHeaderParsingIPv4_UDP(t *testing.T) {
 	packet := []byte{69, 0, 0, 32, 249, 138, 0, 0, 64, 17, 121, 54, 1, 2, 3, 4, 1, 2, 3, 5, 4, 210, 3, 232, 0, 12, 235, 9, 1, 2, 3, 4}
 
 	header := &PacketHeaderData{}
-	if !fillPacketHeaderData(packet, header, 0, false) {
+	if !fillPacketHeaderData(packet, header, false) {
 		t.Fatalf("Failed to parse a packet header")
 	}
 	assert.Equal(t, header.protocol, uint8(17))
@@ -478,7 +478,7 @@ func TestHeaderParsingIPv4_UDP(t *testing.T) {
 	assert.Equal(t, header.sourcePort, uint16(1234))
 	assert.Equal(t, header.destPort, uint16(1000))
 
-	if !fillPacketHeaderData(packet, header, 0, true) {
+	if !fillPacketHeaderData(packet, header, true) {
 		t.Fatalf("Failed to parse a packet header")
 	}
 	assert.Equal(t, header.protocol, uint8(17))
@@ -491,7 +491,7 @@ func TestHeaderParsingIPv4_UDP(t *testing.T) {
 func TestHeaderParsingIPv4_TCP(t *testing.T) {
 	packet := []byte{0x45, 0x00, 0x00, 0x40, 0x00, 0x00, 0x40, 0x00, 0x40, 0x06, 0x36, 0xab, 0xc0, 0xa8, 0x00, 0x6c, 0x0a, 0x80, 0xfe, 0x14, 0xfd, 0x5b, 0x01, 0xbb, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
 	header := &PacketHeaderData{}
-	if !fillPacketHeaderData(packet, header, 0, false) {
+	if !fillPacketHeaderData(packet, header, false) {
 		t.Fatalf("Failed to parse a packet header")
 	}
 	if header.protocol != 6 {
@@ -502,7 +502,7 @@ func TestHeaderParsingIPv4_TCP(t *testing.T) {
 	checkPort(t, header.sourcePort, 64859, "source")
 	checkPort(t, header.destPort, 443, "destination")
 
-	if !fillPacketHeaderData(packet, header, 0, true) {
+	if !fillPacketHeaderData(packet, header, true) {
 		t.Fatalf("Failed to parse a packet header")
 	}
 	if header.protocol != 6 {
