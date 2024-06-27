@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"golang.zx2c4.com/wireguard/conn"
+	"golang.zx2c4.com/wireguard/device"
 	"golang.zx2c4.com/wireguard/tun"
 	"gvisor.dev/gvisor/pkg/tcpip"
 	"gvisor.dev/gvisor/pkg/tcpip/header"
@@ -287,7 +288,7 @@ func (r *Router) Write(bufs [][]byte, offset int) (int, error) {
 func initializeReadPacketBuffer(size int) [][]byte {
 	buffer := make([][]byte, size, size)
 	for idx := range buffer {
-		buffer[idx] = make([]byte, 0x10000+maxOffset)
+		buffer[idx] = make([]byte, device.MaxSegmentSize)
 	}
 
 	return buffer
