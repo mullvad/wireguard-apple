@@ -8,7 +8,10 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"runtime"
+	"runtime/pprof"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"golang.org/x/crypto/curve25519"
@@ -147,6 +150,152 @@ func configureDevices(t testing.TB, aDev *device.Device, bDev *device.Device) {
 	bConfig := configs[1] + endpointConfigs[1]
 	aDev.IpcSet(aConfig)
 	bDev.IpcSet(bConfig)
+}
+
+func goroutineLeakCheck(t *testing.T) {
+	goroutines := func() (int, []byte) {
+		p := pprof.Lookup("goroutine")
+		b := new(bytes.Buffer)
+		p.WriteTo(b, 1)
+		return p.Count(), b.Bytes()
+	}
+
+	startGoroutines, startStacks := goroutines()
+	t.Cleanup(func() {
+		if t.Failed() {
+			return
+		}
+		// Give goroutines time to exit, if they need it.
+		for i := 0; i < 10000; i++ {
+			if runtime.NumGoroutine() <= startGoroutines {
+				return
+			}
+			time.Sleep(1 * time.Millisecond)
+		}
+		endGoroutines, endStacks := goroutines()
+		t.Logf("starting stacks:\n%s\n", startStacks)
+		t.Logf("ending stacks:\n%s\n", endStacks)
+		t.Fatalf("expected %d goroutines, got %d, leak?", startGoroutines, endGoroutines)
+	})
+}
+
+func TestGoroutineLeaksBaseline(t *testing.T) {
+	// run the goroutine leak check on setting up a baseline WireGuardGo connection
+	goroutineLeakCheck(t)
+	aIp := netip.AddrFrom4([4]byte{1, 2, 3, 4})
+	bIp := netip.AddrFrom4([4]byte{1, 2, 3, 5})
+	listenPort := uint16(1000)
+
+	a, aNet, _ := netstack.CreateNetTUN([]netip.Addr{aIp}, []netip.Addr{}, 1280)
+	b, bNet, _ := netstack.CreateNetTUN([]netip.Addr{bIp}, []netip.Addr{}, 1280)
+
+	// aDev := device.NewDevice(a, conn.NewStdNetBind(), device.NewLogger(device.LogLevelVerbose, ""))
+	aDev := device.NewDevice(a, conn.NewStdNetBind(), device.NewLogger(device.LogLevelVerbose, ""))
+	bDev := device.NewDevice(b, conn.NewStdNetBind(), device.NewLogger(device.LogLevelVerbose, ""))
+
+	configureDevices(t, aDev, bDev)
+
+	aDev.Up()
+	bDev.Up()
+
+	listener, err := bNet.ListenUDPAddrPort(netip.AddrPortFrom(bIp, listenPort))
+	if err != nil {
+		t.Fatal("Failed to open UDP socket for listening")
+	}
+
+	udpSocket, err := aNet.DialUDPAddrPort(netip.AddrPortFrom(aIp, 1234), netip.AddrPortFrom(bIp, listenPort))
+	if err != nil {
+		t.Fatal("Failed to open UDP socket for sending")
+	}
+
+	for i := 0; i < 20; i++ {
+
+		size := 4000
+		txBytes := make([]byte, size)
+		rand.Read(txBytes[:])
+
+		_, err = udpSocket.Write(txBytes)
+		if err != nil {
+			t.Fatal("Failed to send UDP packet")
+		}
+
+		buff := make([]byte, size)
+		bytesRead, err := listener.Read(buff)
+		if err != nil {
+			t.Fatal("Failed to read from listening socket")
+		}
+		if !bytes.Equal(buff, txBytes) {
+			t.Fatalf("Unexpected message received, expected %v, got %v", txBytes, buff)
+		}
+		if bytesRead != size {
+			t.Fatalf("Failed to read %d bytes from UDP", size)
+		}
+	}
+
+	udpSocket.Close()
+	listener.Close()
+	bDev.Close()
+	aDev.Close()
+}
+
+func TestGoroutineLeaks(t *testing.T) {
+	goroutineLeakCheck(t)
+	aIp := netip.AddrFrom4([4]byte{1, 2, 3, 4})
+	bIp := netip.AddrFrom4([4]byte{1, 2, 3, 5})
+	listenPort := uint16(1000)
+
+	a, aNet, _ := netstack.CreateNetTUN([]netip.Addr{aIp}, []netip.Addr{}, 1280)
+	aVirtual, _, _ := netstack.CreateNetTUN([]netip.Addr{aIp}, []netip.Addr{}, 1280)
+
+	router := NewRouter(a, aVirtual)
+
+	b, bNet, _ := netstack.CreateNetTUN([]netip.Addr{bIp}, []netip.Addr{}, 1280)
+
+	// aDev := device.NewDevice(a, conn.NewStdNetBind(), device.NewLogger(device.LogLevelVerbose, ""))
+	aDev := device.NewDevice(&router, conn.NewStdNetBind(), device.NewLogger(device.LogLevelVerbose, ""))
+	bDev := device.NewDevice(b, conn.NewStdNetBind(), device.NewLogger(device.LogLevelVerbose, ""))
+
+	configureDevices(t, aDev, bDev)
+
+	aDev.Up()
+	bDev.Up()
+
+	listener, err := bNet.ListenUDPAddrPort(netip.AddrPortFrom(bIp, listenPort))
+	if err != nil {
+		t.Fatal("Failed to open UDP socket for listening")
+	}
+
+	udpSocket, err := aNet.DialUDPAddrPort(netip.AddrPortFrom(aIp, 1234), netip.AddrPortFrom(bIp, listenPort))
+	if err != nil {
+		t.Fatal("Failed to open UDP socket for sending")
+	}
+
+	for i := 0; i < 20; i++ {
+
+		size := 4000
+		txBytes := make([]byte, size)
+		rand.Read(txBytes[:])
+
+		_, err = udpSocket.Write(txBytes)
+		if err != nil {
+			t.Fatal("Failed to send UDP packet")
+		}
+
+		buff := make([]byte, size)
+		bytesRead, err := listener.Read(buff)
+		if err != nil {
+			t.Fatal("Failed to read from listening socket")
+		}
+		if !bytes.Equal(buff, txBytes) {
+			t.Fatalf("Unexpected message received, expected %v, got %v", txBytes, buff)
+		}
+		if bytesRead != size {
+			t.Fatalf("Failed to read %d bytes from UDP", size)
+		}
+	}
+
+	bDev.Close()
+	aDev.Close()
 }
 
 func TestUDP(t *testing.T) {
