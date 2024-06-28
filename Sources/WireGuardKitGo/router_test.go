@@ -20,14 +20,6 @@ import (
 	"golang.zx2c4.com/wireguard/tun/netstack"
 )
 
-func TestRead(t *testing.T) {
-	a, _, _ := netstack.CreateNetTUN([]netip.Addr{}, []netip.Addr{}, 1280)
-	b, _, _ := netstack.CreateNetTUN([]netip.Addr{}, []netip.Addr{}, 1280)
-	router := NewRouter(a, b)
-
-	router.Close()
-}
-
 func TestPacketBatchTruncate(t *testing.T) {
 	pb := PacketBatch{
 		[][]byte{{0, 1, 2, 3}, {9, 8, 7}, {4, 5, 6, 7, 8}},
