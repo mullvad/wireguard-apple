@@ -615,18 +615,18 @@ func TestHeaderParsingIPv4_UDP(t *testing.T) {
 	}
 	assert.Equal(t, header.protocol, uint8(17))
 	// checkAddr(t, header.sourceAddr, "1.2.3.4", "source")
-	checkAddr(t, header.destAddr, "1.2.3.5", "destination")
-	assert.Equal(t, header.sourcePort, uint16(1234))
-	assert.Equal(t, header.destPort, uint16(1000))
+	checkAddr(t, header.remoteAddr, "1.2.3.5", "destination")
+	assert.Equal(t, header.localPort, uint16(1234))
+	assert.Equal(t, header.remotePort, uint16(1000))
 
 	if !fillPacketHeaderData(packet, header, true) {
 		t.Fatalf("Failed to parse a packet header")
 	}
 	assert.Equal(t, header.protocol, uint8(17))
 	// checkAddr(t, header.sourceAddr, "1.2.3.4", "source")
-	checkAddr(t, header.destAddr, "1.2.3.4", "destination")
-	assert.Equal(t, header.sourcePort, uint16(1000))
-	assert.Equal(t, header.destPort, uint16(1234))
+	checkAddr(t, header.remoteAddr, "1.2.3.4", "destination")
+	assert.Equal(t, header.localPort, uint16(1000))
+	assert.Equal(t, header.remotePort, uint16(1234))
 }
 
 func TestHeaderParsingIPv4_TCP(t *testing.T) {
@@ -639,9 +639,9 @@ func TestHeaderParsingIPv4_TCP(t *testing.T) {
 		t.Fatalf(fmt.Sprintf("Not a TCP packet: protocol = 0x%02x", header.protocol))
 	}
 	// checkAddr(t, header.sourceAddr, "192.168.0.108", "source")
-	checkAddr(t, header.destAddr, "10.128.254.20", "destination")
-	checkPort(t, header.sourcePort, 64859, "source")
-	checkPort(t, header.destPort, 443, "destination")
+	checkAddr(t, header.remoteAddr, "10.128.254.20", "destination")
+	checkPort(t, header.localPort, 64859, "source")
+	checkPort(t, header.remotePort, 443, "destination")
 
 	if !fillPacketHeaderData(packet, header, true) {
 		t.Fatalf("Failed to parse a packet header")
@@ -649,9 +649,9 @@ func TestHeaderParsingIPv4_TCP(t *testing.T) {
 	if header.protocol != 6 {
 		t.Fatalf(fmt.Sprintf("Not a TCP packet: protocol = 0x%02x", header.protocol))
 	}
-	checkAddr(t, header.destAddr, "192.168.0.108", "source")
-	checkPort(t, header.sourcePort, 443, "destination")
-	checkPort(t, header.destPort, 64859, "source")
+	checkAddr(t, header.remoteAddr, "192.168.0.108", "source")
+	checkPort(t, header.localPort, 443, "destination")
+	checkPort(t, header.remotePort, 64859, "source")
 }
 
 func getFreeLocalUdpPort(t testing.TB) uint16 {

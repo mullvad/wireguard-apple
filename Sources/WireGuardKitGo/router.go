@@ -112,9 +112,9 @@ func (r *Router) Name() (string, error) {
 
 type PacketHeaderData struct {
 	protocol   tcpip.TransportProtocolNumber
-	sourcePort uint16
-	destAddr   netip.Addr
-	destPort   uint16
+	localPort  uint16
+	remoteAddr netip.Addr
+	remotePort uint16
 }
 
 // protocol (1 byte) + padding (1 byte) + src port (2 bytes) + dest addr (16 bytes, some possibly unused) + dest port
@@ -122,12 +122,12 @@ type PacketIdentifier [22]byte
 
 func (pi PacketHeaderData) asPacketIdentifier() PacketIdentifier {
 	result := PacketIdentifier{}
-	destAddrBytes := pi.destAddr.As16()
+	destAddrBytes := pi.remoteAddr.As16()
 	result[0] = uint8(pi.protocol)
 	result[1] = 0
 	copy(result[4:], destAddrBytes[:])
-	binary.BigEndian.PutUint16(result[2:], pi.sourcePort)
-	binary.BigEndian.PutUint16(result[20:], pi.destPort)
+	binary.BigEndian.PutUint16(result[2:], pi.localPort)
+	binary.BigEndian.PutUint16(result[20:], pi.remotePort)
 	return result
 }
 
@@ -238,7 +238,6 @@ func (r *routerWrite) updateVirtualRoutes() {
 		select {
 		case newVirtualRoute := <-r.virtualRouteChan:
 			r.virtualRoutes[newVirtualRoute] = true
-			continue
 		default:
 			return
 		}
