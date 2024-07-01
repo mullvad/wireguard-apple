@@ -199,7 +199,8 @@ func (r *routerRead) setVirtualRoute(header PacketHeaderData) {
 
 // Read implements tun.Device.
 func (r *Router) Read(bufs [][]byte, sizes []int, offset int) (n int, err error) {
-	// can be executed in parallel
+	// this could theoretically be executed in parallel, but we don't currently do that.
+	// this code is in itself not parallel-safe, so add locking or similar if this changes
 	if offset > maxOffset {
 		return 0, fmt.Errorf("illegal offset %d > %d", offset, maxOffset)
 	}
