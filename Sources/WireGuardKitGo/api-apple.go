@@ -15,6 +15,7 @@ import "C"
 
 import (
 	"fmt"
+	"io"
 	"math"
 	"net/netip"
 	"os"
@@ -25,6 +26,7 @@ import (
 	"time"
 	"unsafe"
 
+	"golang.org/x/net/icmp"
 	"golang.org/x/sys/unix"
 	"golang.zx2c4.com/wireguard/conn"
 	"golang.zx2c4.com/wireguard/device"
@@ -279,6 +281,41 @@ func wgDisableSomeRoamingForBrokenMobileSemantics(tunnelHandle int32) {
 		return
 	}
 	dev.wireGuardDevice.DisableSomeRoamingForBrokenMobileSemantics()
+}
+
+func wgOpenInTunnelICMP(tunnelHandle int32, address String) int {
+	handle, ok := tunnelHandles[tunnelHandle]
+	if !ok || handle.virtualNet == nil {
+		return -1
+	}
+	conn, err := handle.virtualNet.Dial("ping4", address)
+	send_r, send_w, err := os.Pipe()
+	recv_r, recv_w, err := os.Pipe()
+	sendbuf := make([]byte, 1024)
+	rxShutdown := make(chan struct{},1)
+	go func() { // the sender
+		select {
+		case _ = <-r.rxShutdown:
+			return
+		default:
+		}
+		count, err := send_r.Read(sendbuf)
+		if err == io.EOF {
+			rxShutdown <- struct{}{}
+		}
+		// TODO: write it to the connection
+	}
+	recvbuf := make([]byte, 1024)
+	go func() { // the receiver
+		select {
+		case _ = <-r.rxShutdown:
+			return
+		default:
+		}
+		count, err := conn.Read(recvbuf)
+		recv_w.Write(recvbuf)
+	}
+
 }
 
 //export wgVersion
