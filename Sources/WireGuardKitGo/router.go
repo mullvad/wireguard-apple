@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"net/netip"
 	"os"
 	"sync"
@@ -14,9 +13,6 @@ import (
 	"gvisor.dev/gvisor/pkg/tcpip"
 	"gvisor.dev/gvisor/pkg/tcpip/header"
 )
-
-// the number of bytes to allocate before the start of each packet to allow for offsets
-const maxOffset = 128
 
 // how many buffers we should preallocate.
 // Currently, WireGuardGo sends buffers one at a time, so this is 1, though the API says that
@@ -201,9 +197,6 @@ func (r *routerRead) setVirtualRoute(header PacketHeaderData) {
 func (r *Router) Read(bufs [][]byte, sizes []int, offset int) (n int, err error) {
 	// this could theoretically be executed in parallel, but we don't currently do that.
 	// this code is in itself not parallel-safe, so add locking or similar if this changes
-	if offset > maxOffset {
-		return 0, fmt.Errorf("illegal offset %d > %d", offset, maxOffset)
-	}
 	var packetBatch *PacketBatch
 	if r.read.overflow != nil {
 		packetBatch = r.read.overflow
@@ -223,7 +216,7 @@ func (r *Router) Read(bufs [][]byte, sizes []int, offset int) (n int, err error)
 	headerData := PacketHeaderData{}
 	for packetIndex := range packetBatch.packets {
 
-		copy(bufs[packetIndex][offset:], packetBatch.packets[packetIndex][maxOffset:])
+		copy(bufs[packetIndex][offset:], packetBatch.packets[packetIndex][0:])
 		sizes[packetIndex] = packetBatch.sizes[packetIndex]
 
 		if packetBatch.isVirtual && fillPacketHeaderData(bufs[packetIndex][offset:], &headerData, false) {
@@ -303,7 +296,7 @@ func (r *routerRead) readWorker(device tun.Device, isVirtual bool) {
 		default:
 		}
 		batch := r.batchPool.Get().(*PacketBatch)
-		_, err := device.Read(batch.packets, batch.sizes, maxOffset)
+		_, err := device.Read(batch.packets, batch.sizes, 0)
 		if err != nil {
 			r.batchPool.Put(batch)
 			return
