@@ -27,7 +27,6 @@ import (
 	"time"
 	"unsafe"
 
-	"golang.org/x/net/icmp"
 	"golang.org/x/sys/unix"
 	"golang.zx2c4.com/wireguard/apple/multihoptun"
 	"golang.zx2c4.com/wireguard/conn"
@@ -402,19 +401,22 @@ func wgDisableSomeRoamingForBrokenMobileSemantics(tunnelHandle int32) {
 	}
 }
 
-func wgOpenInTunnelICMP(tunnelHandle int32, address String) int {
+func wgOpenInTunnelICMP(tunnelHandle int32, address string, recv_fd *uintptr, send_fd *uintptr) int {
 	handle, ok := tunnelHandles[tunnelHandle]
 	if !ok || handle.virtualNet == nil {
 		return -1
 	}
-	conn, err := handle.virtualNet.Dial("ping4", address)
+	conn, _ := handle.virtualNet.Dial("ping4", address)
 	send_r, send_w, err := os.Pipe()
 	recv_r, recv_w, err := os.Pipe()
+	if err != nil {
+		return -1
+	}
 	sendbuf := make([]byte, 1024)
-	rxShutdown := make(chan struct{},1)
+	rxShutdown := make(chan struct{})
 	go func() { // the sender
 		select {
-		case _ = <-r.rxShutdown:
+		case _ = <-rxShutdown:
 			return
 		default:
 		}
@@ -422,19 +424,24 @@ func wgOpenInTunnelICMP(tunnelHandle int32, address String) int {
 		if err == io.EOF {
 			rxShutdown <- struct{}{}
 		}
-		// TODO: write it to the connection
-	}
+		conn.Write(sendbuf[:count])
+	}()
 	recvbuf := make([]byte, 1024)
 	go func() { // the receiver
 		select {
-		case _ = <-r.rxShutdown:
+		case _ = <-rxShutdown:
 			return
 		default:
 		}
 		count, err := conn.Read(recvbuf)
-		recv_w.Write(recvbuf)
-	}
-
+		if err == io.EOF {
+			rxShutdown <- struct{}{}
+		}
+		recv_w.Write(recvbuf[:count])
+	}()
+	*recv_fd = recv_r.Fd()
+	*send_fd = send_w.Fd()
+	return 0
 }
 
 //export wgVersion
