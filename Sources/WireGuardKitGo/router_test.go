@@ -539,7 +539,7 @@ func testTcpTraffic(t *testing.T, serverNet, clientNet *netstack.Net, serverIP, 
 	rand.Read(firstPayload[:])
 	secondPayload := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
 	thirdPayload := make([]byte, 100)
-	rand.Read(secondPayload[:])
+	rand.Read(thirdPayload[:])
 
 	go func() {
 		defer close(serverErrChan)
@@ -593,6 +593,11 @@ func testTcpTraffic(t *testing.T, serverNet, clientNet *netstack.Net, serverIP, 
 
 	if !bytes.Equal(clientBuff[:bytesRead], secondPayload) {
 		t.Fatalf("Expected to receive %v, instead got %v", secondPayload, clientBuff[:bytesRead])
+	}
+
+	_, err = clientConnection.Write(thirdPayload)
+	if err != nil {
+		t.Fatalf("Failed to send data over TCP connection: %v", err)
 	}
 
 }

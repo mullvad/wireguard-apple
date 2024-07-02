@@ -216,7 +216,7 @@ func (r *Router) Read(bufs [][]byte, sizes []int, offset int) (n int, err error)
 	headerData := PacketHeaderData{}
 	for packetIndex := range packetBatch.packets {
 
-		copy(bufs[packetIndex][offset:], packetBatch.packets[packetIndex][0:])
+		copy(bufs[packetIndex][offset:], packetBatch.packets[packetIndex])
 		sizes[packetIndex] = packetBatch.sizes[packetIndex]
 
 		if packetBatch.isVirtual && fillPacketHeaderData(bufs[packetIndex][offset:], &headerData, false) {
