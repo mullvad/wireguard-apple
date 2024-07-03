@@ -51,6 +51,7 @@ type routerRead struct {
 	waitGroup        *sync.WaitGroup
 	overflow         *PacketBatch
 	batchPool        *sync.Pool
+	error            error
 }
 
 type routerWrite struct {
@@ -198,6 +199,9 @@ func (r *Router) Read(bufs [][]byte, sizes []int, offset int) (n int, err error)
 	// this could theoretically be executed in parallel, but we don't currently do that.
 	// this code is in itself not parallel-safe, so add locking or similar if this changes
 	var packetBatch *PacketBatch
+	if r.read.error != nil {
+		return 0, r.read.error
+	}
 	if r.read.overflow != nil {
 		packetBatch = r.read.overflow
 		r.read.overflow = nil
@@ -289,7 +293,7 @@ func initializeReadPacketBuffer(size int) [][]byte {
 
 func (r *routerRead) readWorker(device tun.Device, isVirtual bool) {
 	defer r.waitGroup.Done()
-	for {
+	for r.error == nil {
 		select {
 		case _ = <-r.rxShutdown:
 			return
@@ -299,6 +303,7 @@ func (r *routerRead) readWorker(device tun.Device, isVirtual bool) {
 		_, err := device.Read(batch.packets, batch.sizes, 0)
 		if err != nil {
 			r.batchPool.Put(batch)
+			r.error = err
 			return
 		}
 		batch.isVirtual = isVirtual
@@ -324,6 +329,7 @@ func newRouterRead(real, virtual tun.Device, virtualRouteChan chan PacketIdentif
 				return batch
 			},
 		},
+		nil,
 	}
 	go result.readWorker(real, false)
 	go result.readWorker(virtual, true)
