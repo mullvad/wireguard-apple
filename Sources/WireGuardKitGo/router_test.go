@@ -431,7 +431,7 @@ func BenchmarkUDP(b *testing.B) {
 func TestIpcGet(t *testing.T) {
 	aNet, _, aDev, bNet, _ := setUpRouterDevices(t)
 
-	testTcpTraffic(t, bNet, aNet, bIp, aIp)
+	testTcpTraffic(t, bNet, aNet, bIp)
 
 	settings, err := aDev.IpcGet()
 	if err != nil {
@@ -446,7 +446,7 @@ func TestIpcGet(t *testing.T) {
 func TestTCPReal(t *testing.T) {
 	aNet, _, aDev, bNet, bDev := setUpRouterDevices(t)
 
-	testTcpTraffic(t, aNet, bNet, aIp, bIp)
+	testTcpTraffic(t, aNet, bNet, aIp)
 
 	bDev.Close()
 	aDev.Close()
@@ -455,13 +455,13 @@ func TestTCPReal(t *testing.T) {
 func TestTCPVirtual(t *testing.T) {
 	_, aNetV, aDev, bNet, bDev := setUpRouterDevices(t)
 
-	testTcpTraffic(t, bNet, aNetV, bIp, aIp)
+	testTcpTraffic(t, bNet, aNetV, bIp)
 
 	bDev.Close()
 	aDev.Close()
 }
 
-func testTcpTraffic(t *testing.T, serverNet, clientNet *netstack.Net, serverIP, clientIP netip.Addr) {
+func testTcpTraffic(t *testing.T, serverNet, clientNet *netstack.Net, serverIP netip.Addr) {
 	serverErrChan := make(chan error)
 	listener, err := serverNet.ListenTCPAddrPort(netip.AddrPortFrom(serverIP, 80))
 	if err != nil {
