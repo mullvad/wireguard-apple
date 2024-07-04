@@ -18,6 +18,7 @@ import (
 	"golang.zx2c4.com/wireguard/conn"
 	"golang.zx2c4.com/wireguard/device"
 	"golang.zx2c4.com/wireguard/tun/netstack"
+	"gvisor.dev/gvisor/pkg/tcpip"
 )
 
 var aIp = netip.AddrFrom4([4]byte{1, 2, 3, 4})
@@ -551,8 +552,7 @@ func TestHeaderParsingIPv4_UDP(t *testing.T) {
 	if !fillPacketHeaderData(packet, header, false) {
 		t.Fatalf("Failed to parse a packet header")
 	}
-	assert.Equal(t, header.protocol, uint8(17))
-	// checkAddr(t, header.sourceAddr, "1.2.3.4", "source")
+	assert.Equal(t, header.protocol, tcpip.TransportProtocolNumber(17))
 	checkAddr(t, header.remoteAddr, "1.2.3.5", "destination")
 	assert.Equal(t, header.localPort, uint16(1234))
 	assert.Equal(t, header.remotePort, uint16(1000))
@@ -560,8 +560,7 @@ func TestHeaderParsingIPv4_UDP(t *testing.T) {
 	if !fillPacketHeaderData(packet, header, true) {
 		t.Fatalf("Failed to parse a packet header")
 	}
-	assert.Equal(t, header.protocol, uint8(17))
-	// checkAddr(t, header.sourceAddr, "1.2.3.4", "source")
+	assert.Equal(t, header.protocol, tcpip.TransportProtocolNumber(17))
 	checkAddr(t, header.remoteAddr, "1.2.3.4", "destination")
 	assert.Equal(t, header.localPort, uint16(1000))
 	assert.Equal(t, header.remotePort, uint16(1234))
