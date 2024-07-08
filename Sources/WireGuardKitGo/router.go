@@ -51,6 +51,7 @@ type routerRead struct {
 	waitGroup        *sync.WaitGroup
 	overflow         *PacketBatch
 	batchPool        *sync.Pool
+	errorChannel     chan error
 	error            error
 }
 
@@ -207,9 +208,14 @@ func (r *Router) Read(bufs [][]byte, sizes []int, offset int) (n int, err error)
 		r.read.overflow = nil
 	} else {
 		var ok bool
-		packetBatch, ok = <-r.read.rxChannel
-		if !ok {
-			return 0, errors.New("reader shut down")
+		select {
+		case err = <-r.read.errorChannel:
+			r.read.error = err
+			return 0, err
+		case packetBatch, ok = <-r.read.rxChannel:
+			if !ok {
+				return 0, errors.New("reader shut down")
+			}
 		}
 	}
 	defer func() {
@@ -303,7 +309,7 @@ func (r *routerRead) readWorker(device tun.Device, isVirtual bool) {
 		_, err := device.Read(batch.packets, batch.sizes, 0)
 		if err != nil {
 			r.batchPool.Put(batch)
-			r.error = err
+			r.errorChannel <- err
 			return
 		}
 		batch.isVirtual = isVirtual
@@ -314,6 +320,7 @@ func (r *routerRead) readWorker(device tun.Device, isVirtual bool) {
 func newRouterRead(real, virtual tun.Device, virtualRouteChan chan PacketIdentifier) routerRead {
 	rxChannel := make(chan *PacketBatch)
 	rxShutdown := make(chan struct{}, 2)
+	errorChannel := make(chan error, 1)
 	result := routerRead{
 		map[PacketIdentifier]bool{},
 		virtualRouteChan,
@@ -329,6 +336,7 @@ func newRouterRead(real, virtual tun.Device, virtualRouteChan chan PacketIdentif
 				return batch
 			},
 		},
+		errorChannel,
 		nil,
 	}
 	go result.readWorker(real, false)
