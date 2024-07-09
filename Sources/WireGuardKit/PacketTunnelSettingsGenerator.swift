@@ -209,7 +209,59 @@ class PacketTunnelSettingsGenerator {
         entry?.endpointUapiConfiguration()
     }
 
-    class fileprivate func reresolveEndpoint(endpoint: Endpoint) -> EndpointResolutionResult {
+    private func addresses() -> ([NEIPv4Route], [NEIPv6Route]) {
+        var ipv4Routes = [NEIPv4Route]()
+        var ipv6Routes = [NEIPv6Route]()
+        for addressRange in tunnelConfiguration.interface.addresses {
+            if addressRange.address is IPv4Address {
+                ipv4Routes.append(NEIPv4Route(destinationAddress: "\(addressRange.address)", subnetMask: "\(addressRange.subnetMask())"))
+            } else if addressRange.address is IPv6Address {
+                /* Big fat ugly hack for broken iOS networking stack: the smallest prefix that will have
+                 * any effect on iOS is a /120, so we clamp everything above to /120. This is potentially
+                 * very bad, if various network parameters were actually relying on that subnet being
+                 * intentionally small. TODO: talk about this with upstream iOS devs.
+                 */
+                ipv6Routes.append(NEIPv6Route(destinationAddress: "\(addressRange.address)", networkPrefixLength: NSNumber(value: min(120, addressRange.networkPrefixLength))))
+            }
+        }
+        return (ipv4Routes, ipv6Routes)
+    }
+
+    private func includedRoutes() -> ([NEIPv4Route], [NEIPv6Route]) {
+        var ipv4IncludedRoutes = [NEIPv4Route]()
+        var ipv6IncludedRoutes = [NEIPv6Route]()
+
+        let defaultIPv4Route = NEIPv4Route.default()
+        ipv4IncludedRoutes.append(defaultIPv4Route)
+
+        let defaultIPv6Route = NEIPv6Route.default()
+        ipv6IncludedRoutes.append(defaultIPv6Route)
+
+        for addressRange in tunnelConfiguration.interface.addresses {
+            if addressRange.address is IPv4Address {
+                let route = NEIPv4Route(destinationAddress: "\(addressRange.maskedAddress())", subnetMask: "\(addressRange.subnetMask())")
+                route.gatewayAddress = "\(addressRange.address)"
+                ipv4IncludedRoutes.append(route)
+            } else if addressRange.address is IPv6Address {
+                let route = NEIPv6Route(destinationAddress: "\(addressRange.maskedAddress())", networkPrefixLength: NSNumber(value: addressRange.networkPrefixLength))
+                route.gatewayAddress = "\(addressRange.address)"
+                ipv6IncludedRoutes.append(route)
+            }
+        }
+
+        for peer in tunnelConfiguration.peers {
+            for addressRange in peer.allowedIPs {
+                if addressRange.address is IPv4Address {
+                    ipv4IncludedRoutes.append(NEIPv4Route(destinationAddress: "\(addressRange.address)", subnetMask: "\(addressRange.subnetMask())"))
+                } else if addressRange.address is IPv6Address {
+                    ipv6IncludedRoutes.append(NEIPv6Route(destinationAddress: "\(addressRange.address)", networkPrefixLength: NSNumber(value: addressRange.networkPrefixLength)))
+                }
+            }
+        }
+        return (ipv4IncludedRoutes, ipv6IncludedRoutes)
+    }
+
+    private class func reresolveEndpoint(endpoint: Endpoint) -> EndpointResolutionResult {
         return Result { (endpoint, try endpoint.withReresolvedIP()) }
             .mapError { error -> DNSResolutionError in
                 // swiftlint:disable:next force_cast
