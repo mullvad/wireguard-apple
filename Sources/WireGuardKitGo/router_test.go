@@ -183,9 +183,8 @@ func TestGoroutineLeaksBaseline(t *testing.T) {
 	a, aNet, _ := netstack.CreateNetTUN([]netip.Addr{aIp}, []netip.Addr{}, 1280)
 	b, bNet, _ := netstack.CreateNetTUN([]netip.Addr{bIp}, []netip.Addr{}, 1280)
 
-	// aDev := device.NewDevice(a, conn.NewStdNetBind(), device.NewLogger(device.LogLevelVerbose, ""))
-	aDev := device.NewDevice(a, conn.NewStdNetBind(), device.NewLogger(device.LogLevelVerbose, ""))
-	bDev := device.NewDevice(b, conn.NewStdNetBind(), device.NewLogger(device.LogLevelVerbose, ""))
+	aDev := device.NewDevice(a, conn.NewStdNetBind(), device.NewLogger(device.LogLevelSilent, ""))
+	bDev := device.NewDevice(b, conn.NewStdNetBind(), device.NewLogger(device.LogLevelSilent, ""))
 
 	configureDevices(t, aDev, bDev)
 
@@ -242,9 +241,8 @@ func TestGoroutineLeaks(t *testing.T) {
 
 	b, bNet, _ := netstack.CreateNetTUN([]netip.Addr{bIp}, []netip.Addr{}, 1280)
 
-	// aDev := device.NewDevice(a, conn.NewStdNetBind(), device.NewLogger(device.LogLevelVerbose, ""))
-	aDev := device.NewDevice(&router, conn.NewStdNetBind(), device.NewLogger(device.LogLevelVerbose, ""))
-	bDev := device.NewDevice(b, conn.NewStdNetBind(), device.NewLogger(device.LogLevelVerbose, ""))
+	aDev := device.NewDevice(&router, conn.NewStdNetBind(), device.NewLogger(device.LogLevelSilent, ""))
+	bDev := device.NewDevice(b, conn.NewStdNetBind(), device.NewLogger(device.LogLevelSilent, ""))
 
 	configureDevices(t, aDev, bDev)
 
@@ -297,8 +295,8 @@ func setUpRouterDevices(t testing.TB) (*netstack.Net, *netstack.Net, *device.Dev
 
 	b, bNet, _ := netstack.CreateNetTUN([]netip.Addr{bIp}, []netip.Addr{}, 1280)
 
-	aDev := device.NewDevice(&router, conn.NewStdNetBind(), device.NewLogger(device.LogLevelVerbose, ""))
-	bDev := device.NewDevice(b, conn.NewStdNetBind(), device.NewLogger(device.LogLevelVerbose, ""))
+	aDev := device.NewDevice(&router, conn.NewStdNetBind(), device.NewLogger(device.LogLevelSilent, ""))
+	bDev := device.NewDevice(b, conn.NewStdNetBind(), device.NewLogger(device.LogLevelSilent, ""))
 
 	configureDevices(t, aDev, bDev)
 
