@@ -18,7 +18,12 @@ import (
 	"golang.zx2c4.com/wireguard/conn"
 	"golang.zx2c4.com/wireguard/device"
 	"golang.zx2c4.com/wireguard/tun/netstack"
+	"gvisor.dev/gvisor/pkg/tcpip"
 )
+
+var aIp = netip.AddrFrom4([4]byte{1, 2, 3, 4})
+var bIp = netip.AddrFrom4([4]byte{1, 2, 3, 5})
+var listenPort = uint16(1000)
 
 func TestPacketBatchTruncate(t *testing.T) {
 	pb := PacketBatch{
@@ -174,16 +179,12 @@ func goroutineLeakCheck(t *testing.T) {
 func TestGoroutineLeaksBaseline(t *testing.T) {
 	// run the goroutine leak check on setting up a baseline WireGuardGo connection
 	goroutineLeakCheck(t)
-	aIp := netip.AddrFrom4([4]byte{1, 2, 3, 4})
-	bIp := netip.AddrFrom4([4]byte{1, 2, 3, 5})
-	listenPort := uint16(1000)
 
 	a, aNet, _ := netstack.CreateNetTUN([]netip.Addr{aIp}, []netip.Addr{}, 1280)
 	b, bNet, _ := netstack.CreateNetTUN([]netip.Addr{bIp}, []netip.Addr{}, 1280)
 
-	// aDev := device.NewDevice(a, conn.NewStdNetBind(), device.NewLogger(device.LogLevelVerbose, ""))
-	aDev := device.NewDevice(a, conn.NewStdNetBind(), device.NewLogger(device.LogLevelVerbose, ""))
-	bDev := device.NewDevice(b, conn.NewStdNetBind(), device.NewLogger(device.LogLevelVerbose, ""))
+	aDev := device.NewDevice(a, conn.NewStdNetBind(), device.NewLogger(device.LogLevelSilent, ""))
+	bDev := device.NewDevice(b, conn.NewStdNetBind(), device.NewLogger(device.LogLevelSilent, ""))
 
 	configureDevices(t, aDev, bDev)
 
@@ -232,9 +233,6 @@ func TestGoroutineLeaksBaseline(t *testing.T) {
 
 func TestGoroutineLeaks(t *testing.T) {
 	goroutineLeakCheck(t)
-	aIp := netip.AddrFrom4([4]byte{1, 2, 3, 4})
-	bIp := netip.AddrFrom4([4]byte{1, 2, 3, 5})
-	listenPort := uint16(1000)
 
 	a, aNet, _ := netstack.CreateNetTUN([]netip.Addr{aIp}, []netip.Addr{}, 1280)
 	aVirtual, _, _ := netstack.CreateNetTUN([]netip.Addr{aIp}, []netip.Addr{}, 1280)
@@ -243,9 +241,8 @@ func TestGoroutineLeaks(t *testing.T) {
 
 	b, bNet, _ := netstack.CreateNetTUN([]netip.Addr{bIp}, []netip.Addr{}, 1280)
 
-	// aDev := device.NewDevice(a, conn.NewStdNetBind(), device.NewLogger(device.LogLevelVerbose, ""))
-	aDev := device.NewDevice(&router, conn.NewStdNetBind(), device.NewLogger(device.LogLevelVerbose, ""))
-	bDev := device.NewDevice(b, conn.NewStdNetBind(), device.NewLogger(device.LogLevelVerbose, ""))
+	aDev := device.NewDevice(&router, conn.NewStdNetBind(), device.NewLogger(device.LogLevelSilent, ""))
+	bDev := device.NewDevice(b, conn.NewStdNetBind(), device.NewLogger(device.LogLevelSilent, ""))
 
 	configureDevices(t, aDev, bDev)
 
@@ -290,26 +287,28 @@ func TestGoroutineLeaks(t *testing.T) {
 	aDev.Close()
 }
 
-func TestUDP(t *testing.T) {
-	aIp := netip.AddrFrom4([4]byte{1, 2, 3, 4})
-	bIp := netip.AddrFrom4([4]byte{1, 2, 3, 5})
-	listenPort := uint16(1000)
-
+func setUpRouterDevices(t testing.TB) (*netstack.Net, *netstack.Net, *device.Device, *netstack.Net, *device.Device) {
 	a, aNet, _ := netstack.CreateNetTUN([]netip.Addr{aIp}, []netip.Addr{}, 1280)
-	aVirtual, _, _ := netstack.CreateNetTUN([]netip.Addr{aIp}, []netip.Addr{}, 1280)
+	aVirtual, aNetV, _ := netstack.CreateNetTUN([]netip.Addr{aIp}, []netip.Addr{}, 1280)
 
 	router := NewRouter(a, aVirtual)
 
 	b, bNet, _ := netstack.CreateNetTUN([]netip.Addr{bIp}, []netip.Addr{}, 1280)
 
-	// aDev := device.NewDevice(a, conn.NewStdNetBind(), device.NewLogger(device.LogLevelVerbose, ""))
-	aDev := device.NewDevice(&router, conn.NewStdNetBind(), device.NewLogger(device.LogLevelVerbose, ""))
-	bDev := device.NewDevice(b, conn.NewStdNetBind(), device.NewLogger(device.LogLevelVerbose, ""))
+	aDev := device.NewDevice(&router, conn.NewStdNetBind(), device.NewLogger(device.LogLevelSilent, ""))
+	bDev := device.NewDevice(b, conn.NewStdNetBind(), device.NewLogger(device.LogLevelSilent, ""))
 
 	configureDevices(t, aDev, bDev)
 
 	aDev.Up()
 	bDev.Up()
+
+	return aNet, aNetV, aDev, bNet, bDev
+}
+
+func TestUDP(t *testing.T) {
+
+	aNet, _, aDev, bNet, bDev := setUpRouterDevices(t)
 
 	listener, err := bNet.ListenUDPAddrPort(netip.AddrPortFrom(bIp, listenPort))
 	if err != nil {
@@ -350,9 +349,6 @@ func TestUDP(t *testing.T) {
 }
 
 func BenchmarkUDPBaseline(b *testing.B) {
-	aIp := netip.AddrFrom4([4]byte{1, 2, 3, 4})
-	bIp := netip.AddrFrom4([4]byte{1, 2, 3, 5})
-	listenPort := uint16(1000)
 
 	a, aNet, _ := netstack.CreateNetTUN([]netip.Addr{aIp}, []netip.Addr{}, 1280)
 
@@ -398,25 +394,7 @@ func BenchmarkUDPBaseline(b *testing.B) {
 }
 
 func BenchmarkUDP(b *testing.B) {
-	aIp := netip.AddrFrom4([4]byte{1, 2, 3, 4})
-	bIp := netip.AddrFrom4([4]byte{1, 2, 3, 5})
-	listenPort := uint16(1000)
-
-	da, aNet, _ := netstack.CreateNetTUN([]netip.Addr{aIp}, []netip.Addr{}, 1280)
-	aVirtual, _, _ := netstack.CreateNetTUN([]netip.Addr{aIp}, []netip.Addr{}, 1280)
-
-	router := NewRouter(da, aVirtual)
-
-	db, bNet, _ := netstack.CreateNetTUN([]netip.Addr{bIp}, []netip.Addr{}, 1280)
-
-	// aDev := device.NewDevice(a, conn.NewStdNetBind(), device.NewLogger(device.LogLevelVerbose, ""))
-	aDev := device.NewDevice(&router, conn.NewStdNetBind(), device.NewLogger(device.LogLevelSilent, ""))
-	bDev := device.NewDevice(db, conn.NewStdNetBind(), device.NewLogger(device.LogLevelSilent, ""))
-
-	configureDevices(b, aDev, bDev)
-
-	aDev.Up()
-	bDev.Up()
+	aNet, _, aDev, bNet, bDev := setUpRouterDevices(b)
 
 	listener, err := bNet.ListenUDPAddrPort(netip.AddrPortFrom(bIp, listenPort))
 	if err != nil {
@@ -450,21 +428,9 @@ func BenchmarkUDP(b *testing.B) {
 }
 
 func TestIpcGet(t *testing.T) {
-	aIp := netip.AddrFrom4([4]byte{1, 2, 3, 4})
-	bIp := netip.AddrFrom4([4]byte{1, 2, 3, 5})
+	aNet, _, aDev, bNet, _ := setUpRouterDevices(t)
 
-	a, aNet, _ := netstack.CreateNetTUN([]netip.Addr{aIp}, []netip.Addr{}, 1280)
-	aVirtual, _, _ := netstack.CreateNetTUN([]netip.Addr{aIp}, []netip.Addr{}, 1280)
-
-	router := NewRouter(a, aVirtual)
-
-	b, bNet, _ := netstack.CreateNetTUN([]netip.Addr{bIp}, []netip.Addr{}, 1280)
-
-	aDev := device.NewDevice(&router, conn.NewStdNetBind(), device.NewLogger(device.LogLevelVerbose, ""))
-	bDev := device.NewDevice(b, conn.NewStdNetBind(), device.NewLogger(device.LogLevelVerbose, ""))
-
-	configureDevices(t, aDev, bDev)
-	testTcpTraffic(t, bNet, aNet, bIp, aIp)
+	testTcpTraffic(t, bNet, aNet, bIp)
 
 	settings, err := aDev.IpcGet()
 	if err != nil {
@@ -477,58 +443,24 @@ func TestIpcGet(t *testing.T) {
 }
 
 func TestTCPReal(t *testing.T) {
-	aIp := netip.AddrFrom4([4]byte{1, 2, 3, 4})
-	bIp := netip.AddrFrom4([4]byte{1, 2, 3, 5})
+	aNet, _, aDev, bNet, bDev := setUpRouterDevices(t)
 
-	a, aNet, _ := netstack.CreateNetTUN([]netip.Addr{aIp}, []netip.Addr{}, 1280)
-	aVirtual, _, _ := netstack.CreateNetTUN([]netip.Addr{aIp}, []netip.Addr{}, 1280)
-
-	router := NewRouter(a, aVirtual)
-
-	b, bNet, _ := netstack.CreateNetTUN([]netip.Addr{bIp}, []netip.Addr{}, 1280)
-
-	// aDev := device.NewDevice(a, conn.NewStdNetBind(), device.NewLogger(device.LogLevelVerbose, ""))
-	aDev := device.NewDevice(&router, conn.NewStdNetBind(), device.NewLogger(device.LogLevelVerbose, ""))
-	bDev := device.NewDevice(b, conn.NewStdNetBind(), device.NewLogger(device.LogLevelVerbose, ""))
-
-	configureDevices(t, aDev, bDev)
-
-	aDev.Up()
-	bDev.Up()
-
-	testTcpTraffic(t, aNet, bNet, aIp, bIp)
+	testTcpTraffic(t, aNet, bNet, aIp)
 
 	bDev.Close()
 	aDev.Close()
 }
 
 func TestTCPVirtual(t *testing.T) {
-	aIp := netip.AddrFrom4([4]byte{1, 2, 3, 4})
-	bIp := netip.AddrFrom4([4]byte{1, 2, 3, 5})
+	_, aNetV, aDev, bNet, bDev := setUpRouterDevices(t)
 
-	a, _, _ := netstack.CreateNetTUN([]netip.Addr{aIp}, []netip.Addr{}, 1280)
-	aVirtual, aNetV, _ := netstack.CreateNetTUN([]netip.Addr{aIp}, []netip.Addr{}, 1280)
-
-	router := NewRouter(a, aVirtual)
-
-	b, bNet, _ := netstack.CreateNetTUN([]netip.Addr{bIp}, []netip.Addr{}, 1280)
-
-	// aDev := device.NewDevice(a, conn.NewStdNetBind(), device.NewLogger(device.LogLevelVerbose, ""))
-	aDev := device.NewDevice(&router, conn.NewStdNetBind(), device.NewLogger(device.LogLevelVerbose, ""))
-	bDev := device.NewDevice(b, conn.NewStdNetBind(), device.NewLogger(device.LogLevelVerbose, ""))
-
-	configureDevices(t, aDev, bDev)
-
-	aDev.Up()
-	bDev.Up()
-
-	testTcpTraffic(t, bNet, aNetV, bIp, aIp)
+	testTcpTraffic(t, bNet, aNetV, bIp)
 
 	bDev.Close()
 	aDev.Close()
 }
 
-func testTcpTraffic(t *testing.T, serverNet, clientNet *netstack.Net, serverIP, clientIP netip.Addr) {
+func testTcpTraffic(t *testing.T, serverNet, clientNet *netstack.Net, serverIP netip.Addr) {
 	serverErrChan := make(chan error)
 	listener, err := serverNet.ListenTCPAddrPort(netip.AddrPortFrom(serverIP, 80))
 	if err != nil {
@@ -539,7 +471,7 @@ func testTcpTraffic(t *testing.T, serverNet, clientNet *netstack.Net, serverIP, 
 	rand.Read(firstPayload[:])
 	secondPayload := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
 	thirdPayload := make([]byte, 100)
-	rand.Read(secondPayload[:])
+	rand.Read(thirdPayload[:])
 
 	go func() {
 		defer close(serverErrChan)
@@ -595,6 +527,11 @@ func testTcpTraffic(t *testing.T, serverNet, clientNet *netstack.Net, serverIP, 
 		t.Fatalf("Expected to receive %v, instead got %v", secondPayload, clientBuff[:bytesRead])
 	}
 
+	_, err = clientConnection.Write(thirdPayload)
+	if err != nil {
+		t.Fatalf("Failed to send data over TCP connection: %v", err)
+	}
+
 }
 
 func checkAddr(t *testing.T, a netip.Addr, b string, label string) {
@@ -613,20 +550,18 @@ func TestHeaderParsingIPv4_UDP(t *testing.T) {
 	if !fillPacketHeaderData(packet, header, false) {
 		t.Fatalf("Failed to parse a packet header")
 	}
-	assert.Equal(t, header.protocol, uint8(17))
-	// checkAddr(t, header.sourceAddr, "1.2.3.4", "source")
-	checkAddr(t, header.destAddr, "1.2.3.5", "destination")
-	assert.Equal(t, header.sourcePort, uint16(1234))
-	assert.Equal(t, header.destPort, uint16(1000))
+	assert.Equal(t, header.protocol, tcpip.TransportProtocolNumber(17))
+	checkAddr(t, header.remoteAddr, "1.2.3.5", "destination")
+	assert.Equal(t, header.localPort, uint16(1234))
+	assert.Equal(t, header.remotePort, uint16(1000))
 
 	if !fillPacketHeaderData(packet, header, true) {
 		t.Fatalf("Failed to parse a packet header")
 	}
-	assert.Equal(t, header.protocol, uint8(17))
-	// checkAddr(t, header.sourceAddr, "1.2.3.4", "source")
-	checkAddr(t, header.destAddr, "1.2.3.4", "destination")
-	assert.Equal(t, header.sourcePort, uint16(1000))
-	assert.Equal(t, header.destPort, uint16(1234))
+	assert.Equal(t, header.protocol, tcpip.TransportProtocolNumber(17))
+	checkAddr(t, header.remoteAddr, "1.2.3.4", "destination")
+	assert.Equal(t, header.localPort, uint16(1000))
+	assert.Equal(t, header.remotePort, uint16(1234))
 }
 
 func TestHeaderParsingIPv4_TCP(t *testing.T) {
@@ -638,10 +573,9 @@ func TestHeaderParsingIPv4_TCP(t *testing.T) {
 	if header.protocol != 6 {
 		t.Fatalf(fmt.Sprintf("Not a TCP packet: protocol = 0x%02x", header.protocol))
 	}
-	// checkAddr(t, header.sourceAddr, "192.168.0.108", "source")
-	checkAddr(t, header.destAddr, "10.128.254.20", "destination")
-	checkPort(t, header.sourcePort, 64859, "source")
-	checkPort(t, header.destPort, 443, "destination")
+	checkAddr(t, header.remoteAddr, "10.128.254.20", "destination")
+	checkPort(t, header.localPort, 64859, "source")
+	checkPort(t, header.remotePort, 443, "destination")
 
 	if !fillPacketHeaderData(packet, header, true) {
 		t.Fatalf("Failed to parse a packet header")
@@ -649,9 +583,9 @@ func TestHeaderParsingIPv4_TCP(t *testing.T) {
 	if header.protocol != 6 {
 		t.Fatalf(fmt.Sprintf("Not a TCP packet: protocol = 0x%02x", header.protocol))
 	}
-	checkAddr(t, header.destAddr, "192.168.0.108", "source")
-	checkPort(t, header.sourcePort, 443, "destination")
-	checkPort(t, header.destPort, 64859, "source")
+	checkAddr(t, header.remoteAddr, "192.168.0.108", "source")
+	checkPort(t, header.localPort, 443, "destination")
+	checkPort(t, header.remotePort, 64859, "source")
 }
 
 func getFreeLocalUdpPort(t testing.TB) uint16 {

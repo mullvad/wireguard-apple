@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"net/netip"
 	"os"
 	"sync"
@@ -14,9 +13,6 @@ import (
 	"gvisor.dev/gvisor/pkg/tcpip"
 	"gvisor.dev/gvisor/pkg/tcpip/header"
 )
-
-// the number of bytes to allocate before the start of each packet to allow for offsets
-const maxOffset = 128
 
 // how many buffers we should preallocate.
 // Currently, WireGuardGo sends buffers one at a time, so this is 1, though the API says that
@@ -55,6 +51,8 @@ type routerRead struct {
 	waitGroup        *sync.WaitGroup
 	overflow         *PacketBatch
 	batchPool        *sync.Pool
+	errorChannel     chan error
+	error            error
 }
 
 type routerWrite struct {
@@ -112,9 +110,9 @@ func (r *Router) Name() (string, error) {
 
 type PacketHeaderData struct {
 	protocol   tcpip.TransportProtocolNumber
-	sourcePort uint16
-	destAddr   netip.Addr
-	destPort   uint16
+	localPort  uint16
+	remoteAddr netip.Addr
+	remotePort uint16
 }
 
 // protocol (1 byte) + padding (1 byte) + src port (2 bytes) + dest addr (16 bytes, some possibly unused) + dest port
@@ -122,12 +120,12 @@ type PacketIdentifier [22]byte
 
 func (pi PacketHeaderData) asPacketIdentifier() PacketIdentifier {
 	result := PacketIdentifier{}
-	destAddrBytes := pi.destAddr.As16()
+	destAddrBytes := pi.remoteAddr.As16()
 	result[0] = uint8(pi.protocol)
 	result[1] = 0
 	copy(result[4:], destAddrBytes[:])
-	binary.BigEndian.PutUint16(result[2:], pi.sourcePort)
-	binary.BigEndian.PutUint16(result[20:], pi.destPort)
+	binary.BigEndian.PutUint16(result[2:], pi.localPort)
+	binary.BigEndian.PutUint16(result[20:], pi.remotePort)
 	return result
 }
 
@@ -199,19 +197,25 @@ func (r *routerRead) setVirtualRoute(header PacketHeaderData) {
 
 // Read implements tun.Device.
 func (r *Router) Read(bufs [][]byte, sizes []int, offset int) (n int, err error) {
-	// can be executed in parallel
-	if offset > maxOffset {
-		return 0, fmt.Errorf("illegal offset %d > %d", offset, maxOffset)
-	}
+	// this could theoretically be executed in parallel, but we don't currently do that.
+	// this code is in itself not parallel-safe, so add locking or similar if this changes
 	var packetBatch *PacketBatch
+	if r.read.error != nil {
+		return 0, r.read.error
+	}
 	if r.read.overflow != nil {
 		packetBatch = r.read.overflow
 		r.read.overflow = nil
 	} else {
 		var ok bool
-		packetBatch, ok = <-r.read.rxChannel
-		if !ok {
-			return 0, errors.New("reader shut down")
+		select {
+		case err = <-r.read.errorChannel:
+			r.read.error = err
+			return 0, err
+		case packetBatch, ok = <-r.read.rxChannel:
+			if !ok {
+				return 0, errors.New("reader shut down")
+			}
 		}
 	}
 	defer func() {
@@ -222,7 +226,7 @@ func (r *Router) Read(bufs [][]byte, sizes []int, offset int) (n int, err error)
 	headerData := PacketHeaderData{}
 	for packetIndex := range packetBatch.packets {
 
-		copy(bufs[packetIndex][offset:], packetBatch.packets[packetIndex][maxOffset:])
+		copy(bufs[packetIndex][offset:], packetBatch.packets[packetIndex])
 		sizes[packetIndex] = packetBatch.sizes[packetIndex]
 
 		if packetBatch.isVirtual && fillPacketHeaderData(bufs[packetIndex][offset:], &headerData, false) {
@@ -238,7 +242,6 @@ func (r *routerWrite) updateVirtualRoutes() {
 		select {
 		case newVirtualRoute := <-r.virtualRouteChan:
 			r.virtualRoutes[newVirtualRoute] = true
-			continue
 		default:
 			return
 		}
@@ -296,16 +299,17 @@ func initializeReadPacketBuffer(size int) [][]byte {
 
 func (r *routerRead) readWorker(device tun.Device, isVirtual bool) {
 	defer r.waitGroup.Done()
-	for {
+	for r.error == nil {
 		select {
 		case _ = <-r.rxShutdown:
 			return
 		default:
 		}
 		batch := r.batchPool.Get().(*PacketBatch)
-		_, err := device.Read(batch.packets, batch.sizes, maxOffset)
+		_, err := device.Read(batch.packets, batch.sizes, 0)
 		if err != nil {
 			r.batchPool.Put(batch)
+			r.errorChannel <- err
 			return
 		}
 		batch.isVirtual = isVirtual
@@ -316,6 +320,7 @@ func (r *routerRead) readWorker(device tun.Device, isVirtual bool) {
 func newRouterRead(real, virtual tun.Device, virtualRouteChan chan PacketIdentifier) routerRead {
 	rxChannel := make(chan *PacketBatch)
 	rxShutdown := make(chan struct{}, 2)
+	errorChannel := make(chan error, 1)
 	result := routerRead{
 		map[PacketIdentifier]bool{},
 		virtualRouteChan,
@@ -331,6 +336,8 @@ func newRouterRead(real, virtual tun.Device, virtualRouteChan chan PacketIdentif
 				return batch
 			},
 		},
+		errorChannel,
+		nil,
 	}
 	go result.readWorker(real, false)
 	go result.readWorker(virtual, true)
