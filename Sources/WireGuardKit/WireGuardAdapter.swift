@@ -194,6 +194,13 @@ public class WireGuardAdapter {
                 completionHandler(.invalidState)
                 return
             }
+            
+            guard let privateAddress = tunnelConfiguration.interface.addresses.compactMap({ $0.address as? IPv4Address }).first else
+            {
+                self.logHandler(.error, "WireGuardAdapter.start: No private IPv4 address found")
+                completionHandler(.invalidState)
+                return
+            }
 
             self.addDefaultPathObserver()
 
@@ -205,7 +212,7 @@ public class WireGuardAdapter {
                 self.logEndpointResolutionResults(resolutionResults)
 
                 self.state = .started(
-                    try self.startWireGuardBackend(wgConfig: wgConfig),
+                    try self.startWireGuardBackend(wgConfig: wgConfig, privateAddress: privateAddress),
                     settingsGenerator
                 )
 
@@ -408,12 +415,14 @@ public class WireGuardAdapter {
     /// - Parameter wgConfig: WireGuard configuration
     /// - Throws: an error of type `WireGuardAdapterError`
     /// - Returns: tunnel handle
-    private func startWireGuardBackend(wgConfig: String) throws -> Int32 {
+    private func startWireGuardBackend(wgConfig: String, privateAddress: IPAddress) throws -> Int32 {
         guard let tunnelFileDescriptor = self.tunnelFileDescriptor else {
             throw WireGuardAdapterError.cannotLocateTunnelFileDescriptor
         }
 
-        let handle = wgTurnOn(wgConfig, tunnelFileDescriptor)
+        let privateAddr = "\(privateAddress)"
+
+        let handle = wgTurnOnIAN(wgConfig, tunnelFileDescriptor, privateAddr)
         if handle < 0 {
             throw WireGuardAdapterError.startWireGuardBackend(handle)
         }
@@ -510,6 +519,13 @@ public class WireGuardAdapter {
             guard isSatisfiable else { return }
 
             self.logHandler(.verbose, "Connectivity online, resuming backend.")
+            
+            guard let privateAddress = settingsGenerator.tunnelConfiguration.interface.addresses.compactMap({ $0.address as? IPv4Address }).first else
+            {
+                self.logHandler(.error, "WireGuardAdapter.start: No private IPv4 address found")
+                return
+            }
+
 
             do {
                 try self.setNetworkSettings(settingsGenerator.generateNetworkSettings())
@@ -518,7 +534,7 @@ public class WireGuardAdapter {
                 self.logEndpointResolutionResults(resolutionResults)
 
                 self.state = .started(
-                    try self.startWireGuardBackend(wgConfig: wgConfig),
+                    try self.startWireGuardBackend(wgConfig: wgConfig, privateAddress: privateAddress),
                     settingsGenerator
                 )
             } catch {
