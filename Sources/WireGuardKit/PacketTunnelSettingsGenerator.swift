@@ -149,6 +149,12 @@ class PacketTunnelSettingsGenerator {
         var ipv4IncludedRoutes = [NEIPv4Route]()
         var ipv6IncludedRoutes = [NEIPv6Route]()
 
+        let defaultIPv4Route = NEIPv4Route.default()
+        ipv4IncludedRoutes.append(defaultIPv4Route)
+
+        let defaultIPv6Route = NEIPv6Route.default()
+        ipv6IncludedRoutes.append(defaultIPv6Route)
+
         for addressRange in tunnelConfiguration.interface.addresses {
             if addressRange.address is IPv4Address {
                 let route = NEIPv4Route(destinationAddress: "\(addressRange.maskedAddress())", subnetMask: "\(addressRange.subnetMask())")
