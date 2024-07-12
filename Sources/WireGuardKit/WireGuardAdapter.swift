@@ -435,7 +435,7 @@ public class WireGuardAdapter {
         let handle = if let entryWgConfig {
             wgTurnOnMultihop(exitWgConfig, entryWgConfig, privateAddr, tunnelFileDescriptor)
         } else {
-            wgTurnOnIAN(exitWgConfig, tunnelFileDescriptor, privateAddr)
+            wgTurnOn(exitWgConfig, tunnelFileDescriptor)
         }
         if handle < 0 {
             throw WireGuardAdapterError.startWireGuardBackend(handle)
