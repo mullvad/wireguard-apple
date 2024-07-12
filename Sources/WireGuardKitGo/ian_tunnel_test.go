@@ -7,6 +7,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
 	"golang.zx2c4.com/wireguard/conn"
@@ -135,6 +136,8 @@ func TestOpenInTunnelICMP(t *testing.T) {
 
 	var readBuf []byte
 	numRead, err := recvFile.Read(readBuf)
+
+	assert.Greater(t, numRead, 0)
 
 	fmt.Printf("bytes received: %d", numRead)
 
