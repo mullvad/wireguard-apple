@@ -110,8 +110,8 @@ func openTUNFromSocket(tunFd int32, logger *device.Logger) tun.Device {
 	return tun
 }
 
-func addTunnelFromDevice(dev *device.Device, settings *C.char, virtualNet *netstack.Net, logger *device.Logger) int32 {
-	err := dev.IpcSet(C.GoString(settings))
+func addTunnelFromDevice(dev *device.Device, settings string, virtualNet *netstack.Net, logger *device.Logger) int32 {
+	err := dev.IpcSet(settings)
 	if err != nil {
 		logger.Errorf("Unable to set IPC settings: %v", err)
 		dev.Close()
@@ -149,20 +149,13 @@ func wgTurnOn(settings *C.char, tunFd int32) int32 {
 	logger.Verbosef("Attaching to interface")
 	dev := device.NewDevice(tun, conn.NewStdNetBind(), logger)
 
-	return addTunnelFromDevice(dev, settings, nil, logger)
+	return addTunnelFromDevice(dev, C.GoString(settings), nil, logger)
 }
 
-func wgTurnOnIANFromExistingTunnel(tun tun.Device, settings *C.char, privateIP *C.char) int32 {
+func wgTurnOnIANFromExistingTunnel(tun tun.Device, settings string, privateAddr netip.Addr) int32 {
 	logger := &device.Logger{
 		Verbosef: CLogger(0).Printf,
 		Errorf:   CLogger(1).Printf,
-	}
-
-	privateAddrStr := C.GoString(privateIP)
-	privateAddr, err := netip.ParseAddr(privateAddrStr)
-	if err != nil {
-		logger.Errorf("Invalid address: %s", privateAddrStr)
-		return -1
 	}
 
 	/// assign the same private IPs associated with your key
@@ -193,12 +186,19 @@ func wgTurnOnIAN(settings *C.char, tunFd int32, privateIP *C.char) int32 {
 		Errorf:   CLogger(1).Printf,
 	}
 
+	privateAddrStr := C.GoString(privateIP)
+	privateAddr, err := netip.ParseAddr(privateAddrStr)
+	if err != nil {
+		logger.Errorf("Invalid address: %s", privateAddrStr)
+		return -1
+	}
+
 	tun := openTUNFromSocket(tunFd, logger)
 	if tun == nil {
 		return -1
 	}
 
-	return wgTurnOnIANFromExistingTunnel(tun, settings, privateIP)
+	return wgTurnOnIANFromExistingTunnel(tun, C.GoString(settings), privateAddr)
 }
 
 //export wgTurnOff
@@ -276,27 +276,31 @@ func wgOpenInTunnelICMP(tunnelHandle int32, address string, recv_fd *uintptr, se
 		return -1
 	}
 	conn, _ := handle.virtualNet.Dial("ping4", address)
-	send_r, send_w, err := os.Pipe()
-	recv_r, recv_w, err := os.Pipe()
+	sendRx, sendTx, err := os.Pipe()
+	recvRx, recvTx, err := os.Pipe()
 	if err != nil {
 		return -1
 	}
+	unix.SetNonblock(int(recvRx.Fd()), false)
 	sendbuf := make([]byte, 1024)
 	rxShutdown := make(chan struct{})
 	go func() { // the sender
+		defer sendRx.Close()
 		select {
 		case _ = <-rxShutdown:
 			return
 		default:
 		}
-		count, err := send_r.Read(sendbuf)
+		count, err := sendRx.Read(sendbuf)
 		if err == io.EOF {
 			rxShutdown <- struct{}{}
 		}
+		fmt.Printf("Sent %d bytes to connection\n", count)
 		conn.Write(sendbuf[:count])
 	}()
 	recvbuf := make([]byte, 1024)
 	go func() { // the receiver
+		defer recvTx.Close()
 		select {
 		case _ = <-rxShutdown:
 			return
@@ -306,10 +310,11 @@ func wgOpenInTunnelICMP(tunnelHandle int32, address string, recv_fd *uintptr, se
 		if err == io.EOF {
 			rxShutdown <- struct{}{}
 		}
-		recv_w.Write(recvbuf[:count])
+		fmt.Printf("Received %d bytes from connection\n", count)
+		recvTx.Write(recvbuf[:count])
 	}()
-	*recv_fd = recv_r.Fd()
-	*send_fd = send_w.Fd()
+	*recv_fd = recvRx.Fd()
+	*send_fd = sendTx.Fd()
 	return 0
 }
 
