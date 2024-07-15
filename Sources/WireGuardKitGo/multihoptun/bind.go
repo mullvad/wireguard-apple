@@ -60,6 +60,7 @@ func (st *multihopBind) Open(port uint16) (fns []conn.ReceiveFunc, actualPort ui
 			var ok bool
 
 			select {
+			case _, _ = <-st.shutdownChan:
 			case _, _ = <-receiveContext.Done():
 				return 0, net.ErrClosed
 			case batch, ok = <-st.writeRecv:
@@ -123,6 +124,7 @@ func (st *multihopBind) Send(bufs [][]byte, ep conn.Endpoint) error {
 	var ok bool
 
 	select {
+	case _, _ = <-st.shutdownChan:
 	case _, _ = <-st.sendContext.Done():
 		// it is important to return a net.ErrClosed, since it implements the
 		// net.Error interface and indicates that it is not a recoverable error.

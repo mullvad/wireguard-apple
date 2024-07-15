@@ -48,6 +48,7 @@ type MultihopTun struct {
 	mtu            int
 	endpoint       conn.Endpoint
 	closed         atomic.Bool
+	shutdownChan   chan struct{}
 	context        context.Context
 	cancelFunc     context.CancelFunc
 }
@@ -72,6 +73,7 @@ func NewMultihopTun(local, remote netip.Addr, remotePort uint16, mtu int) Multih
 
 	connectionId := uint16(rand.Uint32()>>16) | 1
 	context, cancelFunc := context.WithCancel(context.Background())
+	shutdownChan := make(chan struct{})
 
 	return MultihopTun{
 		readRecv,
@@ -86,6 +88,7 @@ func NewMultihopTun(local, remote netip.Addr, remotePort uint16, mtu int) Multih
 		mtu,
 		endpoint,
 		atomic.Bool{},
+		shutdownChan,
 		context,
 		cancelFunc,
 	}
@@ -143,6 +146,7 @@ func (st *MultihopTun) Write(bufs [][]byte, offset int) (int, error) {
 	select {
 	case st.writeRecv <- packetBatch:
 		break
+	case _, _ = <-st.shutdownChan:
 	case _, _ = <-cancellationContext.Done():
 		return 0, io.EOF
 	}
@@ -151,6 +155,7 @@ func (st *MultihopTun) Write(bufs [][]byte, offset int) (int, error) {
 	select {
 	case packetBatch, ok = <-completion:
 		break
+	case _, _ = <-st.shutdownChan:
 	case _, _ = <-cancellationContext.Done():
 		return 0, io.EOF
 	}
@@ -178,6 +183,7 @@ func (st *MultihopTun) Read(bufs [][]byte, sizes []int, offset int) (n int, err 
 	select {
 	case st.readRecv <- packetBatch:
 		break
+	case _, _ = <-st.shutdownChan:
 	case _, _ = <-cancellationContext.Done():
 		return 0, io.EOF
 	}
@@ -186,6 +192,7 @@ func (st *MultihopTun) Read(bufs [][]byte, sizes []int, offset int) (n int, err 
 	select {
 	case packetBatch, ok = <-completion:
 		break
+	case _, _ = <-st.shutdownChan:
 	case _, _ = <-cancellationContext.Done():
 		return 0, io.EOF
 	}
@@ -321,5 +328,6 @@ func (st *MultihopTun) Close() error {
 	if !st.closed.Load() {
 		st.closed.Store(true)
 	}
+	close(st.shutdownChan)
 	return nil
 }

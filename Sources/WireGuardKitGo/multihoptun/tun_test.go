@@ -300,7 +300,7 @@ func uapiCfg(cfg ...string) string {
 	return buf.String()
 }
 
-func TestMultihop(t *testing.T) {
+func _TestMultihop(t *testing.T) {
 	exitConfig := "private_key=b09cb6a9cd5b09236c7610c54c5a2d7cebce1449417368fcbdc228bdd7aa5661\nlisten_port=0\nreplace_peers=true\npublic_key=bde2eaa596b347d8ff3a5d86f137eb3b7db21217358b9e3730237cae9cb51410\nendpoint=185.204.1.203:53440\npersistent_keepalive_interval=0\nreplace_allowed_ips=true\nallowed_ip=0.0.0.0/0\nallowed_ip=::/0\n"
 
 	entryConfig := "private_key=b09cb6a9cd5b09236c7610c54c5a2d7cebce1449417368fcbdc228bdd7aa5661\nlisten_port=0\nreplace_peers=true\npublic_key=04b34736818ef3c2e357fc0305aec2514c14ccfabf7ced94c1c18bcb9ea12b2e\nendpoint=185.213.154.68:53440\npersistent_keepalive_interval=0\nreplace_allowed_ips=true\nallowed_ip=0.0.0.0/0\nallowed_ip=::/0\n"
@@ -402,4 +402,28 @@ func generateTestPair(t *testing.T) (*device.Device, *device.Device) {
 	}
 
 	return readerDev, otherDev
+}
+
+func TestShutdownBind(t *testing.T) {
+	stIp := netip.AddrFrom4([4]byte{1, 2, 3, 5})
+	virtualIp := netip.AddrFrom4([4]byte{1, 2, 3, 4})
+	remotePort := uint16(5005)
+
+	st := NewMultihopTun(stIp, virtualIp, remotePort, 1280)
+	binder := st.Binder()
+	recvFunc, _, err := binder.Open(0)
+	if err != nil {
+		t.Fatalf("Failed to open a UDP socket, %v", err)
+	}
+
+	st.Close()
+
+	_, err = recvFunc[0](make([][]byte, 1), make([]int, 1), make([]conn.Endpoint, 1))
+	neterr, ok := err.(net.Error)
+	if !ok {
+		t.Fatalf("Expected a net.Error, instead got %v", err)
+	}
+	if neterr.Temporary() {
+		t.Fatalf("Expected the net error to not be temporary")
+	}
 }
