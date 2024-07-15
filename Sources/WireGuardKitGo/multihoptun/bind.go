@@ -1,7 +1,6 @@
 package multihoptun
 
 import (
-	"context"
 	"math/rand"
 	"net"
 	"sync"
@@ -16,17 +15,13 @@ type multihopBind struct {
 	*MultihopTun
 	receiverWorkGroup *sync.WaitGroup
 	shutdown          atomic.Bool
-	sendContext       context.Context
-	sendCancel        context.CancelFunc
-	receiveContext    context.Context
-	receiveCancel     context.CancelFunc
+	socketShutdown    chan struct{}
 }
 
 // Close implements tun.Device
 func (st *multihopBind) Close() error {
 	st.shutdown.Store(true)
-	st.receiveCancel()
-	st.sendCancel()
+	close(st.socketShutdown)
 	st.receiverWorkGroup.Wait()
 	return nil
 }
@@ -38,14 +33,7 @@ func (st *multihopBind) Open(port uint16) (fns []conn.ReceiveFunc, actualPort ui
 	} else {
 		st.localPort = uint16(rand.Uint32()>>16) | 1
 	}
-
-	sendContext, sendCancel := context.WithCancel(context.Background())
-	receiveContext, receiveCancel := context.WithCancel(context.Background())
-	st.sendContext = sendContext
-	st.sendCancel = sendCancel
-
-	st.receiveContext = receiveContext
-	st.receiveCancel = receiveCancel
+	st.socketShutdown = make(chan struct{})
 
 	actualPort = st.localPort
 	fns = []conn.ReceiveFunc{
@@ -61,7 +49,7 @@ func (st *multihopBind) Open(port uint16) (fns []conn.ReceiveFunc, actualPort ui
 
 			select {
 			case _, _ = <-st.shutdownChan:
-			case _, _ = <-receiveContext.Done():
+			case _, _ = <-st.socketShutdown:
 				return 0, net.ErrClosed
 			case batch, ok = <-st.writeRecv:
 				break
@@ -125,7 +113,7 @@ func (st *multihopBind) Send(bufs [][]byte, ep conn.Endpoint) error {
 
 	select {
 	case _, _ = <-st.shutdownChan:
-	case _, _ = <-st.sendContext.Done():
+	case _, _ = <-st.socketShutdown:
 		// it is important to return a net.ErrClosed, since it implements the
 		// net.Error interface and indicates that it is not a recoverable error.
 		// wg-go uses the net.Error interface to deduce if it should try to send

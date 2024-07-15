@@ -1,7 +1,6 @@
 package multihoptun
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -90,18 +89,13 @@ func NewMultihopTun(local, remote netip.Addr, remotePort uint16, mtu int) Multih
 }
 
 func (st *MultihopTun) Binder() conn.Bind {
-	sendContext := context.Background()
-	receiveContext := context.Background()
-	emptyFunc := func() {}
 	waitGroup := &sync.WaitGroup{}
+	socketShutdown := make(chan struct{})
 	return &multihopBind{
 		st,
 		waitGroup,
 		atomic.Bool{},
-		sendContext,
-		emptyFunc,
-		receiveContext,
-		emptyFunc,
+		socketShutdown,
 	}
 
 }
@@ -310,7 +304,6 @@ func (*MultihopTun) BatchSize() int {
 
 // Close implements tun.Device
 func (st *MultihopTun) Close() error {
-	st.cancelFunc()
 	if !st.closed.Load() {
 		st.closed.Store(true)
 	}
