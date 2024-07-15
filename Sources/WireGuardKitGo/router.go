@@ -14,8 +14,10 @@ import (
 	"gvisor.dev/gvisor/pkg/tcpip/header"
 )
 
-// The standard packet offset, which WireGuardGo expects
-const defaultOffset = 16
+// The standard packet offset, which WireGuardGo's real tunnel device expects to be at least 4
+// when reading.
+// See: https://github.com/WireGuard/wireguard-go/blob/12269c2761734b15625017d8565745096325392f/tun/tun_darwin.go#L228
+const defaultOffset = 4
 
 // how many buffers we should preallocate.
 // Currently, WireGuardGo sends buffers one at a time, so this is 1, though the API says that
