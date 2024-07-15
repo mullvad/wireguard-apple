@@ -14,6 +14,9 @@ import (
 	"gvisor.dev/gvisor/pkg/tcpip/header"
 )
 
+// The standard packet offset, which WireGuardGo expects
+const defaultOffset = 16
+
 // how many buffers we should preallocate.
 // Currently, WireGuardGo sends buffers one at a time, so this is 1, though the API says that
 // this is not set in stone.
@@ -226,7 +229,7 @@ func (r *Router) Read(bufs [][]byte, sizes []int, offset int) (n int, err error)
 	headerData := PacketHeaderData{}
 	for packetIndex := range packetBatch.packets {
 
-		copy(bufs[packetIndex][offset:], packetBatch.packets[packetIndex])
+		copy(bufs[packetIndex][offset:], packetBatch.packets[packetIndex][defaultOffset:])
 		sizes[packetIndex] = packetBatch.sizes[packetIndex]
 
 		if packetBatch.isVirtual && fillPacketHeaderData(bufs[packetIndex][offset:], &headerData, false) {
@@ -306,7 +309,7 @@ func (r *routerRead) readWorker(device tun.Device, isVirtual bool) {
 		default:
 		}
 		batch := r.batchPool.Get().(*PacketBatch)
-		_, err := device.Read(batch.packets, batch.sizes, 0)
+		_, err := device.Read(batch.packets, batch.sizes, defaultOffset)
 		if err != nil {
 			r.batchPool.Put(batch)
 			r.errorChannel <- err
