@@ -52,7 +52,7 @@ struct DeviceConfiguration {
             #error("Unimplemented")
             #endif
         } else {
-            networkSettings.mtu = NSNumber(value: 1280)
+            networkSettings.mtu = NSNumber(value: mtu)
         }
 
         let (ipv4Addresses, ipv6Addresses) = addresses()
