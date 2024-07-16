@@ -21,7 +21,14 @@ type multihopBind struct {
 // Close implements tun.Device
 func (st *multihopBind) Close() error {
 	st.shutdown.Store(true)
-	close(st.socketShutdown)
+	select {
+	case _, ok := <-st.socketShutdown:
+		if !ok {
+			break
+		}
+	default:
+		close(st.socketShutdown)
+	}
 	st.receiverWorkGroup.Wait()
 	return nil
 }

@@ -208,16 +208,31 @@ func TestMultihopTunWrite(t *testing.T) {
 }
 
 func configureDevices(t testing.TB, aDev *device.Device, bDev *device.Device) {
-	configs, endpointConfigs := genConfigs(t)
+	configs, endpointConfigs, _ := genConfigs(t)
 	aConfig := configs[0] + endpointConfigs[0]
 	bConfig := configs[1] + endpointConfigs[1]
 	aDev.IpcSet(aConfig)
 	bDev.IpcSet(bConfig)
 }
 
+func genConfigsForMultihop(t testing.TB) ([4]string, [4]uint16) {
+	entryConfigs, entryEndpoints, entryPorts := genConfigs(t)
+	exitConfigs, exitEndpoints, exitPorts := genConfigs(t)
+
+	aExitConfig := exitConfigs[0] + exitEndpoints[0]
+	bExitConfig := exitConfigs[1] + exitEndpoints[1]
+	aEntryConfig := entryConfigs[0] + entryEndpoints[0]
+	bEntryConfig := entryConfigs[1] + entryEndpoints[1]
+
+	ports := [4]uint16{entryPorts[0], exitPorts[0], exitPorts[1], entryPorts[1]}
+
+	return [4]string{aEntryConfig, aExitConfig, bExitConfig, bEntryConfig}, ports
+
+}
+
 // genConfigs generates a pair of configs that connect to each other.
 // The configs use distinct, probably-usable ports.
-func genConfigs(tb testing.TB) (cfgs, endpointCfgs [2]string) {
+func genConfigs(tb testing.TB) (cfgs, endpointCfgs [2]string, ports [2]uint16) {
 	var key1, key2 device.NoisePrivateKey
 
 	_, err := rand.Read(key1[:])
@@ -231,6 +246,9 @@ func genConfigs(tb testing.TB) (cfgs, endpointCfgs [2]string) {
 
 	port1 := getFreeLocalUdpPort(tb)
 	port2 := getFreeLocalUdpPort(tb)
+
+	ports[0] = port1
+	ports[1] = port1
 
 	pub1, pub2 := publicKey(&key1), publicKey(&key2)
 
@@ -300,65 +318,6 @@ func uapiCfg(cfg ...string) string {
 	return buf.String()
 }
 
-func _TestMultihop(t *testing.T) {
-	exitConfig := "private_key=b09cb6a9cd5b09236c7610c54c5a2d7cebce1449417368fcbdc228bdd7aa5661\nlisten_port=0\nreplace_peers=true\npublic_key=bde2eaa596b347d8ff3a5d86f137eb3b7db21217358b9e3730237cae9cb51410\nendpoint=185.204.1.203:53440\npersistent_keepalive_interval=0\nreplace_allowed_ips=true\nallowed_ip=0.0.0.0/0\nallowed_ip=::/0\n"
-
-	entryConfig := "private_key=b09cb6a9cd5b09236c7610c54c5a2d7cebce1449417368fcbdc228bdd7aa5661\nlisten_port=0\nreplace_peers=true\npublic_key=04b34736818ef3c2e357fc0305aec2514c14ccfabf7ced94c1c18bcb9ea12b2e\nendpoint=185.213.154.68:53440\npersistent_keepalive_interval=0\nreplace_allowed_ips=true\nallowed_ip=0.0.0.0/0\nallowed_ip=::/0\n"
-	privateIp := netip.MustParseAddr("10.134.155.17")
-	exitMtu := 1280
-	exitEndpoint, err := netip.ParseAddrPort("185.204.1.203:53440")
-	if err != nil {
-		panic(err)
-	}
-
-	virtualDev, virtualNet, _ := netstack.CreateNetTUN([]netip.Addr{privateIp}, []netip.Addr{}, exitMtu)
-	st := NewMultihopTun(privateIp, exitEndpoint.Addr(), exitEndpoint.Port(), exitMtu+80)
-
-	exitDevice := device.NewDevice(virtualDev, st.Binder(), device.NewLogger(device.LogLevelSilent, ""))
-	entryDevice := device.NewDevice(&st, conn.NewStdNetBind(), device.NewLogger(device.LogLevelVerbose, ""))
-
-	exitDevice.IpcSet(exitConfig)
-	entryDevice.IpcSet(entryConfig)
-	entryDevice.Up()
-	exitDevice.Up()
-
-	sendIcmp(t, virtualNet)
-
-	exitDevice.Close()
-	entryDevice.Close()
-}
-
-func sendIcmp(t *testing.T, virtualNet *netstack.Net) {
-	conn, err := virtualNet.Dial("ping4", "10.64.0.1")
-	requestPing := icmp.Echo{
-		Seq:  345,
-		Data: []byte("gopher burrow"),
-	}
-	icmpBytes, _ := (&icmp.Message{Type: ipv4.ICMPTypeEcho, Code: 0, Body: &requestPing}).Marshal(nil)
-	conn.SetReadDeadline(time.Now().Add(time.Second * 9))
-	start := time.Now()
-	_, err = conn.Write(icmpBytes)
-	if err != nil {
-		t.Fatal(err)
-	}
-	n, err := conn.Read(icmpBytes[:])
-	if err != nil {
-		t.Fatal(err)
-	}
-	replyPacket, err := icmp.ParseMessage(1, icmpBytes[:n])
-	if err != nil {
-		t.Fatal(err)
-	}
-	replyPing, ok := replyPacket.Body.(*icmp.Echo)
-	if !ok {
-		t.Fatalf("invalid reply type: %v", replyPacket)
-	}
-	if !bytes.Equal(replyPing.Data, requestPing.Data) || replyPing.Seq != requestPing.Seq {
-		t.Fatalf("invalid ping reply: %v", replyPing)
-	}
-	fmt.Printf("Ping latency: %v\n", time.Since(start))
-}
-
 func TestShutdown(t *testing.T) {
 	a, b := generateTestPair(t)
 	b.Close()
@@ -426,4 +385,95 @@ func TestShutdownBind(t *testing.T) {
 	if neterr.Temporary() {
 		t.Fatalf("Expected the net error to not be temporary")
 	}
+}
+
+func TestMultihopLocally(t *testing.T) {
+	aVirtualIp := netip.AddrFrom4([4]byte{1, 2, 3, 5})
+	bVirtualIp := netip.AddrFrom4([4]byte{1, 2, 3, 4})
+
+	configsForMultihop, ports := genConfigsForMultihop(t)
+
+	multihopA := NewMultihopTun(aVirtualIp, netip.MustParseAddr(fmt.Sprintf("127.0.0.1")), ports[3], 1280)
+	multihopB := NewMultihopTun(bVirtualIp, netip.MustParseAddr(fmt.Sprintf("127.0.0.1")), ports[0], 1280)
+	aBinder := multihopA.Binder()
+	bBinder := multihopB.Binder()
+
+	virtualDevA, virtualNetA, _ := netstack.CreateNetTUN([]netip.Addr{aVirtualIp}, []netip.Addr{}, 1280)
+	virtualDevB, virtualNetB, _ := netstack.CreateNetTUN([]netip.Addr{bVirtualIp}, []netip.Addr{}, 1280)
+
+	aExitDevice := device.NewDevice(virtualDevA, aBinder, device.NewLogger(device.LogLevelVerbose, ""))
+	aExitDevice.IpcSet(configsForMultihop[0])
+
+	aEntryDevice := device.NewDevice(&multihopA, conn.NewStdNetBind(), device.NewLogger(device.LogLevelVerbose, ""))
+	aEntryDevice.IpcSet(configsForMultihop[1])
+
+	bEntryDevice := device.NewDevice(&multihopB, conn.NewStdNetBind(), device.NewLogger(device.LogLevelVerbose, ""))
+	bEntryDevice.IpcSet(configsForMultihop[2])
+
+	bExitDevice := device.NewDevice(virtualDevB, bBinder, device.NewLogger(device.LogLevelVerbose, ""))
+	bExitDevice.IpcSet(configsForMultihop[3])
+
+	err := aExitDevice.Up()
+	if err != nil {
+		t.Fatalf("exit device a failed to up itself: %v", err)
+	}
+
+	err = aEntryDevice.Up()
+	if err != nil {
+		t.Fatalf("entry device a failed to up itself: %v", err)
+	}
+
+	err = bExitDevice.Up()
+	if err != nil {
+		t.Fatalf("exit device b failed to up itself: %v", err)
+	}
+
+	err = bEntryDevice.Up()
+	if err != nil {
+		t.Fatalf("entry device b failed to up itself: %v", err)
+	}
+
+	listenerAddr := netip.AddrPortFrom(bVirtualIp, 7070)
+	senderAddr := netip.AddrPortFrom(aVirtualIp, 0)
+	listenerSocket, err := virtualNetB.ListenUDPAddrPort(netip.AddrPortFrom(bVirtualIp, 7070))
+	if err != nil {
+		t.Fatalf("Fail to open listener socket: %v", err)
+	}
+
+	senderSocket, err := virtualNetA.DialUDPAddrPort(senderAddr, listenerAddr)
+	if err != nil {
+		t.Fatalf("Failed to open sender socket: %v", err)
+	}
+
+	payload := []byte{1, 2, 3, 4, 5}
+
+	n, err := senderSocket.Write(payload)
+	if err != nil {
+		t.Fatalf("Failed to send payload: %v", err)
+	}
+
+	if n != len(payload) {
+		t.Fatalf("Expected to send %v bytes, instead sent %v", len(payload), n)
+	}
+
+	rxBuffer := []byte{1, 2, 3, 4, 5}
+	n, err = listenerSocket.Read(rxBuffer)
+	if err != nil {
+		t.Fatalf("Failed to receive payload: %v", err)
+	}
+	if n != len(payload) {
+		t.Fatalf("Expected to read %v bytes, instead read %v bytes", len(payload), n)
+	}
+
+	for idx := range rxBuffer {
+		if rxBuffer[idx] != payload[idx] {
+			t.Fatalf("At index %d, expected value %d, instead got %v", idx, rxBuffer[idx], payload[idx])
+		}
+	}
+
+	aEntryDevice.Close()
+	aExitDevice.Close()
+	bEntryDevice.Close()
+	bExitDevice.Close()
+
 }
