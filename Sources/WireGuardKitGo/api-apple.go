@@ -34,6 +34,20 @@ import (
 	"golang.zx2c4.com/wireguard/tun/netstack"
 )
 
+const (
+	_              = iota
+	errBadIPString = -iota
+	errDup
+	errSetNonblock
+	errCreateTun
+	errCreateVirtualTun
+	errNoVirtualNet
+	errBadWgConfig
+	errDeviceLimitHit
+	errGetMtu
+	errNoEndpointInConfig
+)
+
 var loggerFunc unsafe.Pointer
 var loggerCtx unsafe.Pointer
 
@@ -93,20 +107,14 @@ func wgTurnOnMultihopInner(tun tun.Device, exitSettings *C.char, entrySettings *
 	if err != nil {
 		logger.Errorf("Failed to parse private IP: %v", err)
 		tun.Close()
-		return -5
-	}
-
-	if err != nil {
-		logger.Errorf("Failed to create new virtual tunnel: %v", err)
-		tun.Close()
-		return -6
+		return errBadIPString
 	}
 
 	exitConfigString := C.GoString(exitSettings)
 	exitEndpoint := parseEndpointFromGoConfig(exitConfigString)
 	if exitEndpoint == nil {
 		tun.Close()
-		return -7
+		return errNoEndpointInConfig
 	}
 
 	singletun := multihoptun.NewMultihopTun(ip, exitEndpoint.Addr(), exitEndpoint.Port(), exitMtu+80)
@@ -118,14 +126,14 @@ func wgTurnOnMultihopInner(tun tun.Device, exitSettings *C.char, entrySettings *
 	if err != nil {
 		logger.Errorf("Unable to set IPC settings for entry: %v", err)
 		tun.Close()
-		return -8
+		return errBadWgConfig
 	}
 
 	err = exitDev.IpcSet(exitConfigString)
 	if err != nil {
 		logger.Errorf("Unable to set IPC settings for exit: %v", err)
 		tun.Close()
-		return -9
+		return errBadWgConfig
 	}
 
 	exitDev.Up()
@@ -140,7 +148,7 @@ func wgTurnOnMultihopInner(tun tun.Device, exitSettings *C.char, entrySettings *
 	}
 	if i == math.MaxInt32 {
 		tun.Close()
-		return -10
+		return errDeviceLimitHit
 	}
 	tunnelHandles[i] = tunnelHandle{exitDev, entryDev, logger, nil}
 	return i
@@ -156,26 +164,26 @@ func wgTurnOnMultihop(exitSettings *C.char, entrySettings *C.char, privateIp *C.
 	dupTunFd, err := unix.Dup(int(tunFd))
 	if err != nil {
 		logger.Errorf("Unable to dup tun fd: %v", err)
-		return -2
+		return errDup
 	}
 
 	err = unix.SetNonblock(dupTunFd, true)
 	if err != nil {
 		logger.Errorf("Unable to set tun fd as non blocking: %v", err)
 		unix.Close(dupTunFd)
-		return -3
+		return errSetNonblock
 	}
 	tun, err := tun.CreateTUNFromFile(os.NewFile(uintptr(dupTunFd), "/dev/tun"), 0)
 	if err != nil {
 		logger.Errorf("Unable to create new tun device from fd: %v", err)
 		unix.Close(dupTunFd)
-		return -4
+		return errCreateTun
 	}
 
 	exitMtu, err := tun.MTU()
 	if err != nil {
 		tun.Close()
-		return -5
+		return errGetMtu
 	}
 
 	return wgTurnOnMultihopInner(tun, exitSettings, entrySettings, privateIp, exitMtu, logger)
@@ -244,26 +252,26 @@ func wgTurnOnIAN(settings *C.char, tunFd int32, privateIP *C.char) int32 {
 	privateAddr, err := netip.ParseAddr(privateAddrStr)
 	if err != nil {
 		logger.Errorf("Invalid address: %s", privateAddrStr)
-		return -1
+		return errBadIPString
 	}
 
 	dupTunFd, err := unix.Dup(int(tunFd))
 	if err != nil {
 		logger.Errorf("Unable to dup tun fd: %v", err)
-		return -2
+		return errDup
 	}
 
 	err = unix.SetNonblock(dupTunFd, true)
 	if err != nil {
 		logger.Errorf("Unable to set tun fd as non blocking: %v", err)
 		unix.Close(dupTunFd)
-		return -3
+		return errSetNonblock
 	}
 	tun, err := tun.CreateTUNFromFile(os.NewFile(uintptr(dupTunFd), "/dev/tun"), 0)
 	if err != nil {
 		logger.Errorf("Unable to create new tun device from fd: %v", err)
 		unix.Close(dupTunFd)
-		return -4
+		return errCreateTun
 	}
 	/// assign the same private IPs associated with your key
 	vtun, virtualNet, err := netstack.CreateNetTUN([]netip.Addr{privateAddr}, []netip.Addr{}, 1280)
@@ -271,13 +279,13 @@ func wgTurnOnIAN(settings *C.char, tunFd int32, privateIP *C.char) int32 {
 	if err != nil {
 		logger.Errorf("Failed to initialize virtual tunnel device: %v", err)
 		tun.Close()
-		return -5
+		return errCreateVirtualTun
 	}
 
 	if virtualNet == nil {
 		logger.Errorf("Failed to initialize virtual tunnel device")
 		tun.Close()
-		return -6
+		return errNoVirtualNet
 	}
 
 	wrapper := NewRouter(tun, vtun)
@@ -288,7 +296,7 @@ func wgTurnOnIAN(settings *C.char, tunFd int32, privateIP *C.char) int32 {
 	if err != nil {
 		logger.Errorf("Unable to set IPC settings: %v", err)
 		dev.Close()
-		return -7
+		return errBadWgConfig
 	}
 
 	dev.Up()
@@ -302,7 +310,7 @@ func wgTurnOnIAN(settings *C.char, tunFd int32, privateIP *C.char) int32 {
 	}
 	if i == math.MaxInt32 {
 		dev.Close()
-		return -8
+		return errDeviceLimitHit
 	}
 	tunnelHandles[i] = tunnelHandle{dev, nil, logger, virtualNet}
 	// TODO: add a tunnel handle, or otherwise make sure we can create connections in the tunnel
@@ -336,7 +344,7 @@ func wgSetConfig(tunnelHandle int32, settings *C.char) int64 {
 		if ipcErr, ok := err.(*device.IPCError); ok {
 			return ipcErr.ErrorCode()
 		}
-		return -1
+		return errBadWgConfig
 	}
 	return 0
 }
