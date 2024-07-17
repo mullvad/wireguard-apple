@@ -313,7 +313,11 @@ func (r *routerRead) readWorker(device tun.Device, isVirtual bool) {
 			return
 		}
 		batch.isVirtual = isVirtual
-		r.rxChannel <- batch
+		select {
+		case _ = <-r.rxShutdown:
+			return
+		case r.rxChannel <- batch:
+		}
 	}
 }
 
