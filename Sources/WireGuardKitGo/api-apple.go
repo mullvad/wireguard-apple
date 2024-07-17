@@ -14,6 +14,7 @@ package main
 import "C"
 
 import (
+	"bufio"
 	"fmt"
 	"math"
 	"net/netip"
@@ -26,10 +27,25 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/unix"
+	"golang.zx2c4.com/wireguard/apple/multihoptun"
 	"golang.zx2c4.com/wireguard/conn"
 	"golang.zx2c4.com/wireguard/device"
 	"golang.zx2c4.com/wireguard/tun"
 	"golang.zx2c4.com/wireguard/tun/netstack"
+)
+
+const (
+	_              = iota
+	errBadIPString = -iota
+	errDup
+	errSetNonblock
+	errCreateTun
+	errCreateVirtualTun
+	errNoVirtualNet
+	errBadWgConfig
+	errDeviceLimitHit
+	errGetMtu
+	errNoEndpointInConfig
 )
 
 var loggerFunc unsafe.Pointer
@@ -54,9 +70,10 @@ func (l CLogger) Printf(format string, args ...interface{}) {
 }
 
 type tunnelHandle struct {
-	wireGuardDevice *device.Device
-	virtualNet      *netstack.Net
-	logger          *device.Logger
+	exit       *device.Device
+	entry      *device.Device
+	logger     *device.Logger
+	virtualNet *netstack.Net
 }
 
 var tunnelHandles = make(map[int32]tunnelHandle)
@@ -83,6 +100,94 @@ func init() {
 func wgSetLogger(context, loggerFn uintptr) {
 	loggerCtx = unsafe.Pointer(context)
 	loggerFunc = unsafe.Pointer(loggerFn)
+}
+
+func wgTurnOnMultihopInner(tun tun.Device, exitSettings *C.char, entrySettings *C.char, privateIp *C.char, exitMtu int, logger *device.Logger) int32 {
+	ip, err := netip.ParseAddr(C.GoString(privateIp))
+	if err != nil {
+		logger.Errorf("Failed to parse private IP: %v", err)
+		tun.Close()
+		return errBadIPString
+	}
+
+	exitConfigString := C.GoString(exitSettings)
+	exitEndpoint := parseEndpointFromGoConfig(exitConfigString)
+	if exitEndpoint == nil {
+		tun.Close()
+		return errNoEndpointInConfig
+	}
+
+	singletun := multihoptun.NewMultihopTun(ip, exitEndpoint.Addr(), exitEndpoint.Port(), exitMtu+80)
+
+	exitDev := device.NewDevice(tun, singletun.Binder(), logger)
+	entryDev := device.NewDevice(&singletun, conn.NewStdNetBind(), logger)
+
+	err = entryDev.IpcSet(C.GoString(entrySettings))
+	if err != nil {
+		logger.Errorf("Unable to set IPC settings for entry: %v", err)
+		tun.Close()
+		return errBadWgConfig
+	}
+
+	err = exitDev.IpcSet(exitConfigString)
+	if err != nil {
+		logger.Errorf("Unable to set IPC settings for exit: %v", err)
+		tun.Close()
+		return errBadWgConfig
+	}
+
+	exitDev.Up()
+	entryDev.Up()
+	logger.Verbosef("Device started")
+
+	var i int32
+	for i = 0; i < math.MaxInt32; i++ {
+		if _, exists := tunnelHandles[i]; !exists {
+			break
+		}
+	}
+	if i == math.MaxInt32 {
+		tun.Close()
+		return errDeviceLimitHit
+	}
+	tunnelHandles[i] = tunnelHandle{exitDev, entryDev, logger, nil}
+	return i
+}
+
+//export wgTurnOnMultihop
+func wgTurnOnMultihop(exitSettings *C.char, entrySettings *C.char, privateIp *C.char, tunFd int32) int32 {
+	logger := &device.Logger{
+		Verbosef: CLogger(0).Printf,
+		Errorf:   CLogger(1).Printf,
+	}
+
+	dupTunFd, err := unix.Dup(int(tunFd))
+	if err != nil {
+		logger.Errorf("Unable to dup tun fd: %v", err)
+		return errDup
+	}
+
+	err = unix.SetNonblock(dupTunFd, true)
+	if err != nil {
+		logger.Errorf("Unable to set tun fd as non blocking: %v", err)
+		unix.Close(dupTunFd)
+		return errSetNonblock
+	}
+	tun, err := tun.CreateTUNFromFile(os.NewFile(uintptr(dupTunFd), "/dev/tun"), 0)
+	if err != nil {
+		logger.Errorf("Unable to create new tun device from fd: %v", err)
+		unix.Close(dupTunFd)
+		return errCreateTun
+	}
+
+	exitMtu, err := tun.MTU()
+	if err != nil {
+		tun.Close()
+		return errGetMtu
+	}
+
+	return wgTurnOnMultihopInner(tun, exitSettings, entrySettings, privateIp, exitMtu, logger)
+
 }
 
 //export wgTurnOn
@@ -132,7 +237,7 @@ func wgTurnOn(settings *C.char, tunFd int32) int32 {
 		unix.Close(dupTunFd)
 		return -1
 	}
-	tunnelHandles[i] = tunnelHandle{dev, nil, logger}
+	tunnelHandles[i] = tunnelHandle{dev, nil, logger, nil}
 	return i
 }
 
@@ -147,26 +252,26 @@ func wgTurnOnIAN(settings *C.char, tunFd int32, privateIP *C.char) int32 {
 	privateAddr, err := netip.ParseAddr(privateAddrStr)
 	if err != nil {
 		logger.Errorf("Invalid address: %s", privateAddrStr)
-		return -1
+		return errBadIPString
 	}
 
 	dupTunFd, err := unix.Dup(int(tunFd))
 	if err != nil {
 		logger.Errorf("Unable to dup tun fd: %v", err)
-		return -2
+		return errDup
 	}
 
 	err = unix.SetNonblock(dupTunFd, true)
 	if err != nil {
 		logger.Errorf("Unable to set tun fd as non blocking: %v", err)
 		unix.Close(dupTunFd)
-		return -3
+		return errSetNonblock
 	}
 	tun, err := tun.CreateTUNFromFile(os.NewFile(uintptr(dupTunFd), "/dev/tun"), 0)
 	if err != nil {
 		logger.Errorf("Unable to create new tun device from fd: %v", err)
 		unix.Close(dupTunFd)
-		return -4
+		return errCreateTun
 	}
 	/// assign the same private IPs associated with your key
 	vtun, virtualNet, err := netstack.CreateNetTUN([]netip.Addr{privateAddr}, []netip.Addr{}, 1280)
@@ -174,13 +279,13 @@ func wgTurnOnIAN(settings *C.char, tunFd int32, privateIP *C.char) int32 {
 	if err != nil {
 		logger.Errorf("Failed to initialize virtual tunnel device: %v", err)
 		tun.Close()
-		return -5
+		return errCreateVirtualTun
 	}
 
 	if virtualNet == nil {
 		logger.Errorf("Failed to initialize virtual tunnel device")
 		tun.Close()
-		return -6
+		return errNoVirtualNet
 	}
 
 	wrapper := NewRouter(tun, vtun)
@@ -191,7 +296,7 @@ func wgTurnOnIAN(settings *C.char, tunFd int32, privateIP *C.char) int32 {
 	if err != nil {
 		logger.Errorf("Unable to set IPC settings: %v", err)
 		dev.Close()
-		return -7
+		return errBadWgConfig
 	}
 
 	dev.Up()
@@ -205,9 +310,9 @@ func wgTurnOnIAN(settings *C.char, tunFd int32, privateIP *C.char) int32 {
 	}
 	if i == math.MaxInt32 {
 		dev.Close()
-		return -8
+		return errDeviceLimitHit
 	}
-	tunnelHandles[i] = tunnelHandle{dev, virtualNet, logger}
+	tunnelHandles[i] = tunnelHandle{dev, nil, logger, virtualNet}
 	// TODO: add a tunnel handle, or otherwise make sure we can create connections in the tunnel
 	return i
 }
@@ -219,7 +324,12 @@ func wgTurnOff(tunnelHandle int32) {
 		return
 	}
 	delete(tunnelHandles, tunnelHandle)
-	handle.wireGuardDevice.Close()
+
+	handle.exit.Close()
+
+	if handle.entry != nil {
+		handle.entry.Close()
+	}
 }
 
 //export wgSetConfig
@@ -228,13 +338,13 @@ func wgSetConfig(tunnelHandle int32, settings *C.char) int64 {
 	if !ok {
 		return 0
 	}
-	err := handle.wireGuardDevice.IpcSet(C.GoString(settings))
+	err := handle.exit.IpcSet(C.GoString(settings))
 	if err != nil {
 		handle.logger.Errorf("Unable to set IPC settings: %v", err)
 		if ipcErr, ok := err.(*device.IPCError); ok {
 			return ipcErr.ErrorCode()
 		}
-		return -1
+		return errBadWgConfig
 	}
 	return 0
 }
@@ -245,7 +355,8 @@ func wgGetConfig(tunnelHandle int32) *C.char {
 	if !ok {
 		return nil
 	}
-	settings, err := handle.wireGuardDevice.IpcGet()
+
+	settings, err := handle.exit.IpcGet()
 	if err != nil {
 		return nil
 	}
@@ -258,11 +369,16 @@ func wgBumpSockets(tunnelHandle int32) {
 	if !ok {
 		return
 	}
+	device := handle.exit
+	if handle.entry != nil {
+		device = handle.entry
+	}
+
 	go func() {
 		for i := 0; i < 10; i++ {
-			err := handle.wireGuardDevice.BindUpdate()
+			err := device.BindUpdate()
 			if err == nil {
-				handle.wireGuardDevice.SendKeepalivesToPeersWithCurrentKeypair()
+				device.SendKeepalivesToPeersWithCurrentKeypair()
 				return
 			}
 			handle.logger.Errorf("Unable to update bind, try %d: %v", i+1, err)
@@ -278,7 +394,10 @@ func wgDisableSomeRoamingForBrokenMobileSemantics(tunnelHandle int32) {
 	if !ok {
 		return
 	}
-	dev.wireGuardDevice.DisableSomeRoamingForBrokenMobileSemantics()
+	dev.exit.DisableSomeRoamingForBrokenMobileSemantics()
+	if dev.entry != nil {
+		dev.entry.DisableSomeRoamingForBrokenMobileSemantics()
+	}
 }
 
 //export wgVersion
@@ -300,3 +419,25 @@ func wgVersion() *C.char {
 }
 
 func main() {}
+
+// Parse a wireguard config and return the first endpoint address it finds and
+// parses successfully.
+func parseEndpointFromGoConfig(config string) *netip.AddrPort {
+	scanner := bufio.NewScanner(strings.NewReader(config))
+	for scanner.Scan() {
+		line := scanner.Text()
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+
+		if key == "endpoint" {
+			endpoint, err := netip.ParseAddrPort(value)
+			if err == nil {
+				return &endpoint
+			}
+		}
+
+	}
+	return nil
+}

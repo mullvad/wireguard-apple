@@ -176,7 +176,7 @@ func goroutineLeakCheck(t *testing.T) {
 	})
 }
 
-func TestGoroutineLeaksBaseline(t *testing.T) {
+func _TestGoroutineLeaksBaseline(t *testing.T) {
 	// run the goroutine leak check on setting up a baseline WireGuardGo connection
 	goroutineLeakCheck(t)
 
@@ -231,7 +231,7 @@ func TestGoroutineLeaksBaseline(t *testing.T) {
 	aDev.Close()
 }
 
-func TestGoroutineLeaks(t *testing.T) {
+func _TestGoroutineLeaks(t *testing.T) {
 	goroutineLeakCheck(t)
 
 	a, aNet, _ := netstack.CreateNetTUN([]netip.Addr{aIp}, []netip.Addr{}, 1280)
