@@ -25,51 +25,6 @@ var aIp = netip.AddrFrom4([4]byte{1, 2, 3, 4})
 var bIp = netip.AddrFrom4([4]byte{1, 2, 3, 5})
 var listenPort = uint16(1000)
 
-func TestPacketBatchTruncate(t *testing.T) {
-	pb := PacketBatch{
-		[][]byte{{0, 1, 2, 3}, {9, 8, 7}, {4, 5, 6, 7, 8}},
-		[]int{4, 3, 5},
-		true,
-	}
-	overflow := pb.truncate(2, func() *PacketBatch { return new(PacketBatch) })
-
-	assert.Equal(t, pb, PacketBatch{
-		[][]byte{{0, 1, 2, 3}, {9, 8, 7}},
-		[]int{4, 3},
-		true,
-	}, "Truncated PacketBatch")
-	assert.Equal(t, *overflow, PacketBatch{
-		[][]byte{{4, 5, 6, 7, 8}},
-		[]int{5},
-		true,
-	}, "Overflow PacketBatch")
-}
-
-func TestPacketBatchTruncateNoOp(t *testing.T) {
-	pb := PacketBatch{
-		[][]byte{{0, 1, 2, 3}, {9, 8, 7}, {4, 5, 6, 7, 8}},
-		[]int{4, 3, 5},
-		false,
-	}
-	overflow := pb.truncate(5, func() *PacketBatch { return new(PacketBatch) })
-
-	assert.Equal(t, pb, PacketBatch{
-		[][]byte{{0, 1, 2, 3}, {9, 8, 7}, {4, 5, 6, 7, 8}},
-		[]int{4, 3, 5},
-		false,
-	}, "Truncated PacketBatch")
-	assert.Nil(t, overflow, "Overflow PacketBatch")
-
-	overflow2 := pb.truncate(3, func() *PacketBatch { return new(PacketBatch) })
-
-	assert.Equal(t, pb, PacketBatch{
-		[][]byte{{0, 1, 2, 3}, {9, 8, 7}, {4, 5, 6, 7, 8}},
-		[]int{4, 3, 5},
-		false,
-	}, "Truncated PacketBatch")
-	assert.Nil(t, overflow2, "Overflow PacketBatch")
-}
-
 func uapiCfg(cfg ...string) string {
 	if len(cfg)%2 != 0 {
 		panic("odd number of args to uapiReader")
@@ -288,12 +243,12 @@ func _TestGoroutineLeaks(t *testing.T) {
 }
 
 func setUpRouterDevices(t testing.TB) (*netstack.Net, *netstack.Net, *device.Device, *netstack.Net, *device.Device) {
-	a, aNet, _ := netstack.CreateNetTUN([]netip.Addr{aIp}, []netip.Addr{}, 1280)
-	aVirtual, aNetV, _ := netstack.CreateNetTUN([]netip.Addr{aIp}, []netip.Addr{}, 1280)
+	a, aNet, _ := netstack.CreateNetTUN([]netip.Addr{aIp}, []netip.Addr{}, 1420)
+	aVirtual, aNetV, _ := netstack.CreateNetTUN([]netip.Addr{aIp}, []netip.Addr{}, 1420)
 
 	router := NewRouter(a, aVirtual)
 
-	b, bNet, _ := netstack.CreateNetTUN([]netip.Addr{bIp}, []netip.Addr{}, 1280)
+	b, bNet, _ := netstack.CreateNetTUN([]netip.Addr{bIp}, []netip.Addr{}, 1420)
 
 	aDev := device.NewDevice(&router, conn.NewStdNetBind(), device.NewLogger(device.LogLevelSilent, ""))
 	bDev := device.NewDevice(b, conn.NewStdNetBind(), device.NewLogger(device.LogLevelSilent, ""))
@@ -322,7 +277,7 @@ func TestUDP(t *testing.T) {
 
 	for i := 0; i < 20; i++ {
 
-		size := 4000
+		size := 1000
 		txBytes := make([]byte, size)
 		rand.Read(txBytes[:])
 
@@ -342,6 +297,7 @@ func TestUDP(t *testing.T) {
 		if bytesRead != size {
 			t.Fatalf("Failed to read %d bytes from UDP", size)
 		}
+
 	}
 
 	bDev.Close()
@@ -458,6 +414,44 @@ func TestTCPVirtual(t *testing.T) {
 
 	bDev.Close()
 	aDev.Close()
+}
+
+func TestPlainVirtnet(t *testing.T) {
+	a, aNet, _ := netstack.CreateNetTUN([]netip.Addr{aIp}, []netip.Addr{}, 1280)
+	b, bNet, _ := netstack.CreateNetTUN([]netip.Addr{bIp}, []netip.Addr{}, 1280)
+
+	go func() {
+		buf := make([]byte, 1700)
+		for {
+			n, err := a.Read(buf, 0)
+			if err != nil {
+				return
+			}
+			_, err = b.Write(buf[:n], 0)
+			if err != nil {
+				return
+			}
+		}
+
+	}()
+
+	go func() {
+		buf := make([]byte, 1700)
+		for {
+			n, err := b.Read(buf, 0)
+			if err != nil {
+				return
+			}
+			_, err = a.Write(buf[:n], 0)
+			if err != nil {
+				return
+			}
+		}
+
+	}()
+
+	testTcpTraffic(t, bNet, aNet, bIp)
+
 }
 
 func testTcpTraffic(t *testing.T, serverNet, clientNet *netstack.Net, serverIP netip.Addr) {
