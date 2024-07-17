@@ -77,8 +77,7 @@ func (r *Router) BatchSize() int {
 func (r *Router) Close() error {
 	// TODO: anything else we need to shut down here
 	// This is doubled to shut down both readWorker goroutines
-	r.read.rxShutdown <- struct{}{}
-	r.read.rxShutdown <- struct{}{}
+	close(r.read.rxShutdown)
 	err1 := r.real.Close()
 	err2 := r.virtual.Close()
 	r.read.waitGroup.Wait()
@@ -301,8 +300,10 @@ func (r *routerRead) readWorker(device tun.Device, isVirtual bool) {
 	defer r.waitGroup.Done()
 	for r.error == nil {
 		select {
-		case _ = <-r.rxShutdown:
-			return
+		case _, ok := <-r.rxShutdown:
+			if ok {
+				return
+			}
 		default:
 		}
 		batch := r.batchPool.Get().(*PacketBatch)
