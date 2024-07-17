@@ -16,6 +16,8 @@ import (
 	"golang.zx2c4.com/wireguard/conn"
 	"golang.zx2c4.com/wireguard/device"
 	"golang.zx2c4.com/wireguard/tun/netstack"
+	"gvisor.dev/gvisor/pkg/tcpip"
+	"gvisor.dev/gvisor/pkg/tcpip/header"
 )
 
 func TestMultihopTunBind(t *testing.T) {
@@ -41,31 +43,24 @@ func TestMultihopTunTrafficV4(t *testing.T) {
 
 	// Pipe reads from virtualTun into multihop tun
 	go func() {
-		bufs := make([][]byte, 1)
-		bufs[0] = make([]byte, 1600)
-		sizes := make([]int, 1)
+		buf := make([]byte, 1600)
 		var err error
 		n := 0
 		for err == nil {
-			n, err = virtualTun.Read(bufs, sizes, 0)
-			n, err = st.Write(bufs[:n], 0)
+			n, err = virtualTun.Read(buf, 0)
+			n, err = st.Write(buf[:n], 0)
 		}
 
 	}()
 
 	// Pipe reads from multihop tun into virtualTun
 	go func() {
-		bufs := make([][]byte, 1)
-		bufs[0] = make([]byte, 1600)
-		sizes := make([]int, 1)
+		buf := make([]byte, 1600)
 		var err error
 		n := 0
 		for err == nil {
-			n, err = st.Read(bufs, sizes, 0)
-			for idx := range bufs {
-				bufs[idx] = bufs[idx][:sizes[idx]]
-			}
-			n, err = virtualTun.Write(bufs[:n], 0)
+			n, err = st.Read(buf, 0)
+			n, err = virtualTun.Write(buf[:n], 0)
 		}
 	}()
 
@@ -93,23 +88,22 @@ func TestMultihopTunTrafficV4(t *testing.T) {
 	}()
 	_, _ = <-readyChan
 
-	err = stBind.Send([][]byte{payload}, nil)
+	err = stBind.Send(payload, nil)
 	if err != nil {
 		t.Fatalf("Failed ot send traffic to multihop tun: %s", err)
 	}
 
-	recvBuf := [][]byte{make([]byte, 1600)}
-	sizes := []int{0}
-	packetsReceived, err := recvFunc[0](recvBuf, sizes, make([]conn.Endpoint, 1, 1))
+	recvBuf := make([]byte, 1600)
+	packetSize, _, err := recvFunc[0](recvBuf)
 	if err != nil {
 		t.Fatalf("Failed to receive traffic from recvFunc - %s", err)
 	}
-	if packetsReceived != 1 {
-		t.Fatalf("Expected to recieve 1 packet, instead received %d", packetsReceived)
+	if packetSize != len(payload) {
+		t.Fatalf("Expected to recieve %d bytes, instead received %d", len(payload), packetSize)
 	}
 
 	for idx := range payload {
-		if payload[idx] != recvBuf[0][idx] {
+		if payload[idx] != recvBuf[idx] {
 			t.Fatalf("Expected to receive %v, instead received %v", payload, recvBuf[0])
 		}
 	}
@@ -142,10 +136,9 @@ func TestReadEnd(t *testing.T) {
 		t.Fatalf("Expected a random port to be assigned, instead got 0")
 	}
 
-	bufs := make([][]byte, 1, 128)
-	bufs[0] = []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
+	buf := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
 
-	err = stBind.Send(bufs, nil)
+	err = stBind.Send(buf, nil)
 	if err != nil {
 		t.Fatalf("Error when sending UDP traffic: %v", err)
 	}
@@ -177,34 +170,62 @@ func TestMultihopTunWrite(t *testing.T) {
 		t.Fatalf("Error when sending UDP traffic: %v", err)
 	}
 	go func() {
-		st.Write([][]byte{udpPacket}, 0)
+		st.Write(udpPacket, 0)
 	}()
 
-	bufs := make([][]byte, 128, 128)
-	for i := range bufs {
-		bufs[i] = make([]byte, 1600, 1600)
-	}
-	sizes := make([]int, 128)
-	endpoints := make([]conn.Endpoint, 128)
-	packetsReceived, err := receivers[0](bufs, sizes, endpoints)
+	buf := make([]byte, 1600)
+
+	packetSize, _, err := receivers[0](buf)
 	if err != nil {
 		t.Fatalf("Failed to receive packets: %s", err)
 	}
 
-	if packetsReceived != 1 {
-		t.Fatalf("expected packets to be")
-	}
-
 	expected := []byte{1, 2, 3, 4}
-	if len(bufs[0][:sizes[0]]) != len(expected) {
-		t.Fatalf("Expected %v, got %v", expected, bufs[0])
+	if len(buf[:packetSize]) != len(expected) {
+		t.Fatalf("Expected %v, got %v", expected, buf[0])
 	}
 
-	for b := range bufs[0][:sizes[0]] {
-		if bufs[0][b] != expected[b] {
-			t.Fatalf("Expected %v, got %v", expected, bufs[0])
+	for b := range buf[:packetSize] {
+		if buf[b] != expected[b] {
+			t.Fatalf("Expected %v, got %v", expected, buf[0])
 		}
 	}
+}
+
+func TestMultihopTunRead(t *testing.T) {
+	stIp := netip.AddrFrom4([4]byte{1, 2, 3, 5})
+	virtualIp := netip.AddrFrom4([4]byte{1, 2, 3, 4})
+	remotePort := uint16(5005)
+
+	st := NewMultihopTun(stIp, virtualIp, remotePort, 1280)
+	stBind := st.Binder()
+
+	_, _, err := stBind.Open(0)
+	if err != nil {
+		t.Fatalf("Failed to open UDP socket: %s", err)
+	}
+
+	payload := []byte{1, 2, 3, 4}
+	go stBind.Send(payload, nil)
+
+	bytes := make([]byte, 1500, 1500)
+	bytesRead, err := st.Read(bytes, 0)
+	if err != nil {
+		t.Fatalf("Failed to read from tunnel device: %v", err)
+	}
+
+	packet := header.IPv4(bytes[:bytesRead])
+	virtualIpBytes, _ := virtualIp.MarshalBinary()
+	stIpBytes, _ := stIp.MarshalBinary()
+
+	if packet.SourceAddress() != tcpip.AddrFromSlice(stIpBytes) {
+		t.Fatalf("expected %v, got %v", stIp, packet.SourceAddress())
+	}
+
+	if packet.DestinationAddress() != tcpip.AddrFromSlice(virtualIpBytes) {
+		t.Fatalf("expected %v, got %v", virtualIp, packet.DestinationAddress())
+	}
+
 }
 
 func configureDevices(t testing.TB, aDev *device.Device, bDev *device.Device) {
@@ -374,7 +395,8 @@ func TestShutdownBind(t *testing.T) {
 
 	st.Close()
 
-	_, err = recvFunc[0](make([][]byte, 1), make([]int, 1), make([]conn.Endpoint, 1))
+	buf := make([]byte, 1600)
+	_, _, err = recvFunc[0](buf)
 	neterr, ok := err.(net.Error)
 	if !ok {
 		t.Fatalf("Expected a net.Error, instead got %v", err)
@@ -398,16 +420,16 @@ func TestMultihopLocally(t *testing.T) {
 	virtualDevA, virtualNetA, _ := netstack.CreateNetTUN([]netip.Addr{aVirtualIp}, []netip.Addr{}, 1280)
 	virtualDevB, virtualNetB, _ := netstack.CreateNetTUN([]netip.Addr{bVirtualIp}, []netip.Addr{}, 1280)
 
-	aExitDevice := device.NewDevice(virtualDevA, aBinder, device.NewLogger(device.LogLevelSilent, ""))
+	aExitDevice := device.NewDevice(virtualDevA, aBinder, device.NewLogger(device.LogLevelVerbose, ""))
 	aExitDevice.IpcSet(configsForMultihop[0])
 
-	aEntryDevice := device.NewDevice(&multihopA, conn.NewStdNetBind(), device.NewLogger(device.LogLevelSilent, ""))
+	aEntryDevice := device.NewDevice(&multihopA, conn.NewStdNetBind(), device.NewLogger(device.LogLevelVerbose, ""))
 	aEntryDevice.IpcSet(configsForMultihop[1])
 
-	bEntryDevice := device.NewDevice(&multihopB, conn.NewStdNetBind(), device.NewLogger(device.LogLevelSilent, ""))
+	bEntryDevice := device.NewDevice(&multihopB, conn.NewStdNetBind(), device.NewLogger(device.LogLevelVerbose, ""))
 	bEntryDevice.IpcSet(configsForMultihop[2])
 
-	bExitDevice := device.NewDevice(virtualDevB, bBinder, device.NewLogger(device.LogLevelSilent, ""))
+	bExitDevice := device.NewDevice(virtualDevB, bBinder, device.NewLogger(device.LogLevelVerbose, ""))
 	bExitDevice.IpcSet(configsForMultihop[3])
 
 	err := aExitDevice.Up()
@@ -431,7 +453,7 @@ func TestMultihopLocally(t *testing.T) {
 	}
 
 	listenerAddr := netip.AddrPortFrom(bVirtualIp, 7070)
-	senderAddr := netip.AddrPortFrom(aVirtualIp, 0)
+	senderAddr := netip.AddrPortFrom(aVirtualIp, 4040)
 	listenerSocket, err := virtualNetB.ListenUDPAddrPort(netip.AddrPortFrom(bVirtualIp, 7070))
 	if err != nil {
 		t.Fatalf("Fail to open listener socket: %v", err)
@@ -472,5 +494,4 @@ func TestMultihopLocally(t *testing.T) {
 	aExitDevice.Close()
 	bEntryDevice.Close()
 	bExitDevice.Close()
-
 }

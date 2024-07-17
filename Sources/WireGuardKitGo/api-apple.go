@@ -15,6 +15,7 @@ import "C"
 
 import (
 	"bufio"
+	"encoding/hex"
 	"fmt"
 	"math"
 	"net/netip"
@@ -46,6 +47,12 @@ const (
 	errDeviceLimitHit
 	errGetMtu
 	errNoEndpointInConfig
+	// Configuration for a given device contains no peers. It is peerless.
+	errBadEntryConfig
+	// After applying a configuration to a given WireGuard device, it fails to return a peer it was configured to have.
+	errNoPeer
+	// Failed to enable DAITA
+	errEnableDaita
 )
 
 var loggerFunc unsafe.Pointer
@@ -102,7 +109,7 @@ func wgSetLogger(context, loggerFn uintptr) {
 	loggerFunc = unsafe.Pointer(loggerFn)
 }
 
-func wgTurnOnMultihopInner(tun tun.Device, exitSettings *C.char, entrySettings *C.char, privateIp *C.char, exitMtu int, logger *device.Logger) int32 {
+func wgTurnOnMultihopInner(tun tun.Device, exitSettings *C.char, entrySettings *C.char, privateIp *C.char, exitMtu int, logger *device.Logger, maybeNotMachines *C.char, maybeNotMaxEvents uint32, maybeNotMaxActions uint32) int32 {
 	ip, err := netip.ParseAddr(C.GoString(privateIp))
 	if err != nil {
 		logger.Errorf("Failed to parse private IP: %v", err)
@@ -111,7 +118,7 @@ func wgTurnOnMultihopInner(tun tun.Device, exitSettings *C.char, entrySettings *
 	}
 
 	exitConfigString := C.GoString(exitSettings)
-	exitEndpoint := parseEndpointFromGoConfig(exitConfigString)
+	exitEndpoint := parseEndpointFromConfig(exitConfigString)
 	if exitEndpoint == nil {
 		tun.Close()
 		return errNoEndpointInConfig
@@ -122,7 +129,9 @@ func wgTurnOnMultihopInner(tun tun.Device, exitSettings *C.char, entrySettings *
 	exitDev := device.NewDevice(tun, singletun.Binder(), logger)
 	entryDev := device.NewDevice(&singletun, conn.NewStdNetBind(), logger)
 
-	err = entryDev.IpcSet(C.GoString(entrySettings))
+	entryConfigString := C.GoString(entrySettings)
+
+	err = entryDev.IpcSet(entryConfigString)
 	if err != nil {
 		logger.Errorf("Unable to set IPC settings for entry: %v", err)
 		tun.Close()
@@ -138,6 +147,15 @@ func wgTurnOnMultihopInner(tun tun.Device, exitSettings *C.char, entrySettings *
 
 	exitDev.Up()
 	entryDev.Up()
+
+	// Enable DAITA if DAITA parameters are passed through
+	if maybeNotMachines != nil {
+		returnValue := configureDaita(entryDev, entryConfigString, C.GoString(maybeNotMachines), maybeNotMaxEvents, maybeNotMaxActions)
+		if returnValue != 0 {
+			return returnValue
+		}
+	}
+
 	logger.Verbosef("Device started")
 
 	var i int32
@@ -154,8 +172,28 @@ func wgTurnOnMultihopInner(tun tun.Device, exitSettings *C.char, entrySettings *
 	return i
 }
 
+func parseFirstPubkeyFromConfig(config string) *device.NoisePublicKey {
+	scanner := bufio.NewScanner(strings.NewReader(config))
+	for scanner.Scan() {
+		line := scanner.Text()
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+
+		if key == "public_key" {
+			pubkey, err := hex.DecodeString(value)
+			if err == nil {
+				key := device.NoisePublicKey(pubkey)
+				return &key
+			}
+		}
+	}
+	return nil
+}
+
 //export wgTurnOnMultihop
-func wgTurnOnMultihop(exitSettings *C.char, entrySettings *C.char, privateIp *C.char, tunFd int32) int32 {
+func wgTurnOnMultihop(exitSettings *C.char, entrySettings *C.char, privateIp *C.char, tunFd int32, maybenotMachines *C.char, maybeNotMaxEvents uint32, maybeNotMaxActons uint32) int32 {
 	logger := &device.Logger{
 		Verbosef: CLogger(0).Printf,
 		Errorf:   CLogger(1).Printf,
@@ -186,12 +224,12 @@ func wgTurnOnMultihop(exitSettings *C.char, entrySettings *C.char, privateIp *C.
 		return errGetMtu
 	}
 
-	return wgTurnOnMultihopInner(tun, exitSettings, entrySettings, privateIp, exitMtu, logger)
+	return wgTurnOnMultihopInner(tun, exitSettings, entrySettings, privateIp, exitMtu, logger, maybenotMachines, maybeNotMaxEvents, maybeNotMaxActons)
 
 }
 
 //export wgTurnOn
-func wgTurnOn(settings *C.char, tunFd int32) int32 {
+func wgTurnOn(settings *C.char, tunFd int32, maybeNotMachines *C.char, maybeNotMaxEvents uint32, maybeNotMaxActions uint32) int32 {
 	logger := &device.Logger{
 		Verbosef: CLogger(0).Printf,
 		Errorf:   CLogger(1).Printf,
@@ -217,6 +255,7 @@ func wgTurnOn(settings *C.char, tunFd int32) int32 {
 	logger.Verbosef("Attaching to interface")
 	dev := device.NewDevice(tun, conn.NewStdNetBind(), logger)
 
+	settingsString := C.GoString(settings)
 	err = dev.IpcSet(C.GoString(settings))
 	if err != nil {
 		logger.Errorf("Unable to set IPC settings: %v", err)
@@ -226,6 +265,14 @@ func wgTurnOn(settings *C.char, tunFd int32) int32 {
 
 	dev.Up()
 	logger.Verbosef("Device started")
+
+	// Enable DAITA if DAITA parameters are passed through
+	if maybeNotMachines != nil {
+		returnValue := configureDaita(dev, settingsString, C.GoString(maybeNotMachines), maybeNotMaxEvents, maybeNotMaxActions)
+		if returnValue != 0 {
+			return returnValue
+		}
+	}
 
 	var i int32
 	for i = 1; i < math.MaxInt32; i++ {
@@ -418,11 +465,31 @@ func wgVersion() *C.char {
 	return C.CString("unknown")
 }
 
+func configureDaita(device *device.Device, config string, machines string, maxEvents uint32, maxActions uint32) int32 {
+	entryPeerPubkey := parseFirstPubkeyFromConfig(config)
+	if entryPeerPubkey == nil {
+		return errBadEntryConfig
+	}
+	peer := device.LookupPeer(*entryPeerPubkey)
+	if peer == nil {
+		return errNoPeer
+	}
+
+	const maxPaddingBytes = 0.0
+	const maxBlockingBytes = 0.0
+
+	if !peer.EnableDaita(machines, uint(maxEvents), uint(maxActions), maxPaddingBytes, maxBlockingBytes) {
+		return errEnableDaita
+	}
+
+	return 0
+}
+
 func main() {}
 
 // Parse a wireguard config and return the first endpoint address it finds and
 // parses successfully.
-func parseEndpointFromGoConfig(config string) *netip.AddrPort {
+func parseEndpointFromConfig(config string) *netip.AddrPort {
 	scanner := bufio.NewScanner(strings.NewReader(config))
 	for scanner.Scan() {
 		line := scanner.Text()
