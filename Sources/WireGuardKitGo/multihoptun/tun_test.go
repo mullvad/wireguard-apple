@@ -244,17 +244,14 @@ func genConfigs(tb testing.TB) (cfgs, endpointCfgs [2]string, ports [2]uint16) {
 		tb.Errorf("unable to generate private key random bytes: %v", err)
 	}
 
-	port1 := getFreeLocalUdpPort(tb)
-	port2 := getFreeLocalUdpPort(tb)
-
-	ports[0] = port1
-	ports[1] = port1
+	ports[0] = getFreeLocalUdpPort(tb)
+	ports[1] = getFreeLocalUdpPort(tb)
 
 	pub1, pub2 := publicKey(&key1), publicKey(&key2)
 
 	cfgs[0] = uapiCfg(
 		"private_key", hex.EncodeToString(key1[:]),
-		"listen_port", fmt.Sprintf("%d", port1),
+		"listen_port", fmt.Sprintf("%d", ports[0]),
 		"replace_peers", "true",
 		"public_key", hex.EncodeToString(pub2[:]),
 		"protocol_version", "1",
@@ -263,11 +260,11 @@ func genConfigs(tb testing.TB) (cfgs, endpointCfgs [2]string, ports [2]uint16) {
 	)
 	endpointCfgs[0] = uapiCfg(
 		"public_key", hex.EncodeToString(pub2[:]),
-		"endpoint", fmt.Sprintf("127.0.0.1:%d", port2),
+		"endpoint", fmt.Sprintf("127.0.0.1:%d", ports[1]),
 	)
 	cfgs[1] = uapiCfg(
 		"private_key", hex.EncodeToString(key2[:]),
-		"listen_port", fmt.Sprintf("%d", port2),
+		"listen_port", fmt.Sprintf("%d", ports[1]),
 		"replace_peers", "true",
 		"public_key", hex.EncodeToString(pub1[:]),
 		"protocol_version", "1",
@@ -276,7 +273,7 @@ func genConfigs(tb testing.TB) (cfgs, endpointCfgs [2]string, ports [2]uint16) {
 	)
 	endpointCfgs[1] = uapiCfg(
 		"public_key", hex.EncodeToString(pub1[:]),
-		"endpoint", fmt.Sprintf("127.0.0.1:%d", port1),
+		"endpoint", fmt.Sprintf("127.0.0.1:%d", ports[0]),
 	)
 	return
 }
@@ -401,16 +398,16 @@ func TestMultihopLocally(t *testing.T) {
 	virtualDevA, virtualNetA, _ := netstack.CreateNetTUN([]netip.Addr{aVirtualIp}, []netip.Addr{}, 1280)
 	virtualDevB, virtualNetB, _ := netstack.CreateNetTUN([]netip.Addr{bVirtualIp}, []netip.Addr{}, 1280)
 
-	aExitDevice := device.NewDevice(virtualDevA, aBinder, device.NewLogger(device.LogLevelVerbose, ""))
+	aExitDevice := device.NewDevice(virtualDevA, aBinder, device.NewLogger(device.LogLevelSilent, ""))
 	aExitDevice.IpcSet(configsForMultihop[0])
 
-	aEntryDevice := device.NewDevice(&multihopA, conn.NewStdNetBind(), device.NewLogger(device.LogLevelVerbose, ""))
+	aEntryDevice := device.NewDevice(&multihopA, conn.NewStdNetBind(), device.NewLogger(device.LogLevelSilent, ""))
 	aEntryDevice.IpcSet(configsForMultihop[1])
 
-	bEntryDevice := device.NewDevice(&multihopB, conn.NewStdNetBind(), device.NewLogger(device.LogLevelVerbose, ""))
+	bEntryDevice := device.NewDevice(&multihopB, conn.NewStdNetBind(), device.NewLogger(device.LogLevelSilent, ""))
 	bEntryDevice.IpcSet(configsForMultihop[2])
 
-	bExitDevice := device.NewDevice(virtualDevB, bBinder, device.NewLogger(device.LogLevelVerbose, ""))
+	bExitDevice := device.NewDevice(virtualDevB, bBinder, device.NewLogger(device.LogLevelSilent, ""))
 	bExitDevice.IpcSet(configsForMultihop[3])
 
 	err := aExitDevice.Up()
