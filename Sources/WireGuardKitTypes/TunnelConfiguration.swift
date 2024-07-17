@@ -39,3 +39,20 @@ extension TunnelConfiguration: Equatable {
             Set(lhs.peers) == Set(rhs.peers)
     }
 }
+
+
+/// Contains arguments needed to initialize DAITA for a WireGuard device.
+public struct DaitaConfiguration {
+    /// Contains a string describing a set of DAITA machines.
+    public let machines: String
+    /// Maximum amount of DAITA events to enqueue at any given time.
+    public let maxEvents: UInt32
+    /// Maximum amount of DAITA actions to enqueue at any given time.
+    public let maxActions: UInt32
+
+    public init(machines: String, maxEvents: UInt32, maxActions: UInt32) {
+        self.machines = machines
+        self.maxEvents = maxEvents
+        self.maxActions = maxActions
+    }
+}

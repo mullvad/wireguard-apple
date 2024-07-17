@@ -254,6 +254,26 @@ func wgTurnOnMultihopInner(tun tun.Device, exitSettings *C.char, entrySettings *
 	return addTunnelFromDevice(exitDev, entryDev, exitConfigString, entryConfigString, nil, logger, maybeNotMachines, maybeNotMaxEvents, maybeNotMaxActions)
 }
 
+func parseFirstPubkeyFromConfig(config string) *device.NoisePublicKey {
+	scanner := bufio.NewScanner(strings.NewReader(config))
+	for scanner.Scan() {
+		line := scanner.Text()
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+
+		if key == "public_key" {
+			pubkey, err := hex.DecodeString(value)
+			if err == nil {
+				key := device.NoisePublicKey(pubkey)
+				return &key
+			}
+		}
+	}
+	return nil
+}
+
 //export wgTurnOnMultihop
 func wgTurnOnMultihop(exitSettings *C.char, entrySettings *C.char, privateIp *C.char, tunFd int32, maybenotMachines *C.char, maybeNotMaxEvents uint32, maybeNotMaxActons uint32) int32 {
 	logger := &device.Logger{
@@ -316,7 +336,7 @@ func wgTurnOnIANFromExistingTunnel(tun tun.Device, settings string, privateAddr 
 	logger.Verbosef("Attaching to interface")
 	dev := device.NewDevice(&wrapper, conn.NewStdNetBind(), logger)
 
-	return addTunnelFromDevice(dev, nil, settings, "", virtualNet, logger)
+	return addTunnelFromDevice(dev, nil, settings, "", virtualNet, logger) // FIXME
 }
 
 //export wgTurnOnIAN
@@ -600,7 +620,7 @@ func main() {}
 
 // Parse a wireguard config and return the first endpoint address it finds and
 // parses successfully.
-func parseEndpointFromGoConfig(config string) *netip.AddrPort {
+func parseEndpointFromConfig(config string) *netip.AddrPort {
 	scanner := bufio.NewScanner(strings.NewReader(config))
 	for scanner.Scan() {
 		line := scanner.Text()

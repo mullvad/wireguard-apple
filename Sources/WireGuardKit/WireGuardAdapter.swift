@@ -25,7 +25,7 @@ public enum WireGuardAdapterError: Error {
 
     /// Failure to start WireGuard backend.
     case startWireGuardBackend(Int32)
-    
+
     /// Config has no private IPs.
     case noInterfaceIp
 }
@@ -187,7 +187,7 @@ public class WireGuardAdapter {
         }
     }
     
-    public func startMultihop(exitConfiguration: TunnelConfiguration, entryConfiguration: TunnelConfiguration?, completionHandler: @escaping (WireGuardAdapterError?) -> Void) {
+    public func startMultihop(exitConfiguration: TunnelConfiguration, entryConfiguration: TunnelConfiguration?, daita: DaitaConfiguration? = nil, completionHandler: @escaping (WireGuardAdapterError?) -> Void) {
         workQueue.async {
             guard case .stopped = self.state else {
                 completionHandler(.invalidState)
@@ -204,7 +204,7 @@ public class WireGuardAdapter {
             self.addDefaultPathObserver()
 
             do {
-                let settingsGenerator = try self.makeSettingsGenerator(with: exitConfiguration, entryConfiguration: entryConfiguration)
+                let settingsGenerator = try self.makeSettingsGenerator(with: exitConfiguration, entryConfiguration: entryConfiguration, daita: daita)
                 try self.setNetworkSettings(settingsGenerator.generateNetworkSettings())
 
                 let (exitWgConfig, resolutionResults) = settingsGenerator.uapiConfiguration()
@@ -212,7 +212,7 @@ public class WireGuardAdapter {
                 self.logEndpointResolutionResults(resolutionResults)
 
                 self.state = .started(
-                    try self.startWireGuardBackend(exitWgConfig: exitWgConfig, privateAddress: privateAddress, entryWgConfig: entryWgConfig, mtu: 1280),
+                    try self.startWireGuardBackend(exitWgConfig: exitWgConfig, privateAddress: privateAddress, entryWgConfig: entryWgConfig, mtu: 1280, daita: daita),
                     settingsGenerator
                 )
 
@@ -231,7 +231,7 @@ public class WireGuardAdapter {
     /// - Parameters:
     ///   - tunnelConfiguration: tunnel configuration.
     ///   - completionHandler: completion handler.
-    public func start(tunnelConfiguration: TunnelConfiguration, completionHandler: @escaping (WireGuardAdapterError?) -> Void) {
+    public func start(tunnelConfiguration: TunnelConfiguration, daita: DaitaConfiguration? = nil, completionHandler: @escaping (WireGuardAdapterError?) -> Void) {
         startMultihop(exitConfiguration: tunnelConfiguration, entryConfiguration: nil, completionHandler: completionHandler)
     }
 
@@ -425,17 +425,18 @@ public class WireGuardAdapter {
     /// - Parameter wgConfig: WireGuard configuration
     /// - Throws: an error of type `WireGuardAdapterError`
     /// - Returns: tunnel handle
-    private func startWireGuardBackend(exitWgConfig: String, privateAddress: IPAddress, entryWgConfig: String? = nil, mtu: UInt16 = 1280) throws -> Int32 {
+    private func startWireGuardBackend(exitWgConfig: String, privateAddress: IPAddress, entryWgConfig: String? = nil, mtu: UInt16 = 1280, daita: DaitaConfiguration?) throws -> Int32 {
         guard let tunnelFileDescriptor = self.tunnelFileDescriptor else {
             throw WireGuardAdapterError.cannotLocateTunnelFileDescriptor
         }
 
         let privateAddr = "\(privateAddress)"
-
+        
         let handle = if let entryWgConfig {
-            wgTurnOnMultihop(exitWgConfig, entryWgConfig, privateAddr, tunnelFileDescriptor)
+            wgTurnOnMultihop(exitWgConfig, entryWgConfig, privateAddr, tunnelFileDescriptor, daita?.machines ?? nil, daita?.maxEvents ?? 0, daita?.maxActions ?? 0)
         } else {
-            wgTurnOnIAN(exitWgConfig, tunnelFileDescriptor, privateAddr)
+            //wgTurnOnIAN(exitWgConfig, tunnelFileDescriptor, privateAddr)
+            wgTurnOn(exitWgConfig, tunnelFileDescriptor, daita?.machines ?? nil, daita?.maxEvents ?? 0, daita?.maxActions ?? 0)
         }
         if handle < 0 {
             throw WireGuardAdapterError.startWireGuardBackend(handle)
@@ -451,7 +452,7 @@ public class WireGuardAdapter {
     /// - Parameter entryConfiguration: an optional instance of type `TunnelConfiguration` for the entry WireGuard device
     /// - Throws: an error of type `WireGuardAdapterError`.
     /// - Returns: an instance of type `PacketTunnelSettingsGenerator`.
-    private func makeSettingsGenerator(with exitConfiguration: TunnelConfiguration, entryConfiguration: TunnelConfiguration? = nil) throws -> PacketTunnelSettingsGenerator {
+    private func makeSettingsGenerator(with exitConfiguration: TunnelConfiguration, entryConfiguration: TunnelConfiguration? = nil, daita: DaitaConfiguration? = nil) throws -> PacketTunnelSettingsGenerator {
         let resolvedExitEndpoints = try self.resolvePeers(for: exitConfiguration)
         
         var entry: DeviceConfiguration? = nil
@@ -557,7 +558,7 @@ public class WireGuardAdapter {
                 self.logEndpointResolutionResults(resolutionResults)
 
                 self.state = .started(
-                    try self.startWireGuardBackend(exitWgConfig: exitWgConfig, privateAddress: privateAddress),
+                    try self.startWireGuardBackend(exitWgConfig: exitWgConfig, privateAddress: privateAddress, daita: settingsGenerator.daita),
                     settingsGenerator
                 )
             } catch {
