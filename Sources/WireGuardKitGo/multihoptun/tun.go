@@ -50,13 +50,15 @@ type MultihopTun struct {
 }
 
 type packetBatch struct {
-	packets [][]byte
-	sizes   []int
-	offset  int
-	// indicates how many packets are copied into `packets`, since offsets can be used.
-	packetsCopied int
+	packet []byte
+	size   int
+	offset int
 	// to be used to return the packet batch back to tun.Read and tun.Write
 	completion chan packetBatch
+}
+
+func (pb *packetBatch) Size() int {
+	return len(pb.packet)
 }
 
 func NewMultihopTun(local, remote netip.Addr, remotePort uint16, mtu int) MultihopTun {
@@ -117,12 +119,12 @@ func (*MultihopTun) Name() (string, error) {
 }
 
 // Write implements tun.Device.
-func (st *MultihopTun) Write(bufs [][]byte, offset int) (int, error) {
-
+func (st *MultihopTun) Write(packet []byte, offset int) (int, error) {
 	completion := make(chan packetBatch)
 	packetBatch := packetBatch{
-		packets:    bufs,
+		packet:     packet,
 		offset:     offset,
+		size:       len(packet),
 		completion: completion,
 	}
 
@@ -145,15 +147,15 @@ func (st *MultihopTun) Write(bufs [][]byte, offset int) (int, error) {
 		return 0, io.EOF
 	}
 
-	return packetBatch.packetsCopied, nil
+	return packetBatch.size, nil
 }
 
 // Read implements tun.Device.
-func (st *MultihopTun) Read(bufs [][]byte, sizes []int, offset int) (n int, err error) {
+func (st *MultihopTun) Read(packet []byte, offset int) (n int, err error) {
 	completion := make(chan packetBatch)
 	packetBatch := packetBatch{
-		packets:    bufs,
-		sizes:      sizes,
+		packet:     packet,
+		size:       0,
 		offset:     offset,
 		completion: completion,
 	}
@@ -177,7 +179,7 @@ func (st *MultihopTun) Read(bufs [][]byte, sizes []int, offset int) (n int, err 
 		return 0, io.EOF
 	}
 
-	return packetBatch.packetsCopied, nil
+	return packetBatch.size, nil
 }
 
 func (st *MultihopTun) writePayload(target, payload []byte) (size int, err error) {
@@ -295,7 +297,12 @@ func (st *MultihopTun) headerSize() int {
 
 // BatchSize implements conn.Bind.
 func (*MultihopTun) BatchSize() int {
-	return conn.IdealBatchSize
+	return 128
+}
+
+// BatchSize implements conn.Bind.
+func (*MultihopTun) Flush() error {
+	return nil
 }
 
 // Close implements tun.Device

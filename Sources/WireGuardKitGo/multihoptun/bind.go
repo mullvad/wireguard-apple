@@ -36,55 +36,38 @@ func (st *multihopBind) Open(port uint16) (fns []conn.ReceiveFunc, actualPort ui
 
 	actualPort = st.localPort
 	fns = []conn.ReceiveFunc{
-		func(packets [][]byte, sizes []int, eps []conn.Endpoint) (n int, err error) {
+		func(packet []byte) (bytesRead int, ep conn.Endpoint, err error) {
 			var batch packetBatch
 			var ok bool
 
 			select {
 			case _, _ = <-st.shutdownChan:
 			case _, _ = <-st.socketShutdown:
-				return 0, net.ErrClosed
+				return 0, ep, net.ErrClosed
 			case batch, ok = <-st.writeRecv:
 				break
 			}
 			if !ok {
-				return 0, net.ErrClosed
+				return 0, ep, net.ErrClosed
 			}
 
-			packetsToProcess := len(packets)
-			if len(batch.packets) < packetsToProcess {
-				packetsToProcess = len(batch.packets)
+			ipVersion := header.IPVersion(batch.packet[batch.offset:])
+			if ipVersion == 4 {
+				v4 := header.IPv4(batch.packet[batch.offset:])
+				udp := header.UDP(v4.Payload())
+				copy(packet, udp.Payload())
+				bytesRead = len(udp.Payload())
+
+			} else if ipVersion == 6 {
+				v6 := header.IPv6(batch.packet[batch.offset:])
+				udp := header.UDP(v6.Payload())
+				copy(packet, udp.Payload())
+				bytesRead = len(udp.Payload())
 			}
+			batch.size = bytesRead
+			ep = st.endpoint
 
-			for idx := 0; idx < packetsToProcess; idx += 1 {
-				rxPacket := batch.packets[idx][batch.offset:]
-				ipVersion := header.IPVersion(rxPacket)
-				if ipVersion == 4 {
-					var v4 header.IPv4
-					var udp header.UDP
-					v4 = rxPacket
-					udp = v4.Payload()
-					copy(packets[idx], udp.Payload())
-					sizes[idx] = len(udp.Payload())
-
-				} else if ipVersion == 6 {
-					var v6 header.IPv6
-					var udp header.UDP
-					v6 = rxPacket
-					udp = v6.Payload()
-					copy(packets[idx], udp.Payload())
-					sizes[idx] = len(udp.Payload())
-				}
-
-				eps[idx] = st.endpoint
-				n += 1
-			}
-			batch.packetsCopied = n
-			select {
-			case batch.completion <- batch:
-			case <-st.shutdownChan:
-			}
-
+			batch.completion <- batch
 			return
 		},
 	}
@@ -98,7 +81,7 @@ func (*multihopBind) ParseEndpoint(s string) (conn.Endpoint, error) {
 }
 
 // Send implements conn.Bind.
-func (st *multihopBind) Send(bufs [][]byte, ep conn.Endpoint) error {
+func (st *multihopBind) Send(buf []byte, ep conn.Endpoint) error {
 	var packetBatch packetBatch
 	var ok bool
 
@@ -118,25 +101,16 @@ func (st *multihopBind) Send(bufs [][]byte, ep conn.Endpoint) error {
 		return net.ErrClosed
 	}
 
-	var err error
-	var size int
-	packetBatch.packetsCopied = 0
-	for idx := range bufs {
-		targetPacket := packetBatch.packets[idx][packetBatch.offset:]
-		size, err = st.writePayload(targetPacket[:], bufs[idx])
-		if err != nil {
-			continue
-		}
-		packetBatch.sizes[idx] = size
-		packetBatch.packetsCopied += 1
-	}
+	targetPacket := packetBatch.packet[packetBatch.offset:]
+	size, err := st.writePayload(targetPacket, buf)
+
+	packetBatch.size = size
 
 	select {
 	case packetBatch.completion <- packetBatch:
 	case <-st.shutdownChan:
 		break
 	}
-
 	return err
 }
 
