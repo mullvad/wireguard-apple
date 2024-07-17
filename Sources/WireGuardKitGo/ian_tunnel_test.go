@@ -9,7 +9,6 @@ import (
 	"os"
 	"syscall"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"golang.org/x/net/icmp"
@@ -187,7 +186,7 @@ func TestUDPReplicatePipe(t *testing.T) {
 		t.Fatal("Failed to open UDP socket for sending")
 	}
 
-	sendRx, sendTx, err := os.Pipe()
+	sendRx, sendTx, _ := os.Pipe()
 	rxShutdown := make(chan struct{})
 	sendbuf := make([]byte, 1024)
 
@@ -224,6 +223,7 @@ func TestUDPReplicatePipe(t *testing.T) {
 }
 
 func TestUDPPipe(t *testing.T) {
+	// fails to read correctly
 	a, _, _ := netstack.CreateNetTUN([]netip.Addr{aIp}, []netip.Addr{}, 1280)
 	b, bNet, _ := netstack.CreateNetTUN([]netip.Addr{bIp}, []netip.Addr{}, 1280)
 	// _ := device.NewDevice(a, conn.NewStdNetBind(), device.NewLogger(device.LogLevelSilent, ""))
@@ -231,7 +231,9 @@ func TestUDPPipe(t *testing.T) {
 
 	configs, endpointConfigs := genConfigs(t)
 	aConfig := configs[0] + endpointConfigs[0]
+	bConfig := configs[1] + endpointConfigs[1]
 	tunnel := wgTurnOnIANFromExistingTunnel(a, aConfig, aIp)
+	bDev.IpcSet(bConfig)
 	bDev.Up()
 
 	listener, err := bNet.ListenUDPAddrPort(netip.AddrPortFrom(bIp, 1000))
@@ -239,7 +241,7 @@ func TestUDPPipe(t *testing.T) {
 		t.Fatal("Failed to open UDP socket for listening")
 	}
 
-	sendPipe := testOpenInTunnelUDP(tunnel, netip.MustParseAddrPort("1.2.3.5:1000"))
+	sendPipe := testOpenInTunnelUDP(tunnel, netip.AddrPortFrom(bIp, 1000))
 
 	size := 20
 	txBytes := make([]byte, size)
@@ -247,22 +249,14 @@ func TestUDPPipe(t *testing.T) {
 	rand.Read(txBytes[:])
 
 	numWritten, err := sendPipe.Write(txBytes)
-
-	go func() {
-		numRead, err := listener.Read(rxBytes)
-		if err != nil {
-			t.Fatal("Failed to read from listening socket")
-		}
-		fmt.Printf("%d bytes read\n", numRead)
-		assert.Equal(t, numRead, size)
-	}()
-
-	if err != nil {
-		t.Fatal("Failed to send UDP packet")
-	}
+	assert.Nil(t, err)
 	assert.Equal(t, numWritten, size)
-	time.Sleep(1)
-	assert.Equal(t, txBytes[:size], rxBytes[:size])
+
+	numRead, err := listener.Read(rxBytes)
+	assert.Nil(t, err)
+	assert.Equal(t, numRead, size)
+
+	assert.Equal(t, txBytes, rxBytes)
 }
 
 func TestOpenInTunnelICMPPipes(t *testing.T) {
@@ -280,7 +274,6 @@ func TestOpenInTunnelICMPPipes(t *testing.T) {
 	tunnel := wgTurnOnIANFromExistingTunnel(a, aConfig, aIp)
 
 	// configureDevices(t, aDev, bDev)
-
 	bDev.Up()
 
 	recvRx, sendTx := openInTunnelICMP(tunnel, "1.2.3.5")
