@@ -389,6 +389,117 @@ func wgDisableSomeRoamingForBrokenMobileSemantics(tunnelHandle int32) {
 	}
 }
 
+func testOpenInTunnelUDP(tunnelHandle int32, addrPort netip.AddrPort) *os.File {
+	handle, ok := tunnelHandles[tunnelHandle]
+	if !ok || handle.virtualNet == nil {
+		return nil
+	}
+
+	udpSocket, err := handle.virtualNet.DialUDPAddrPort(netip.AddrPort{}, addrPort)
+	if err != nil {
+		fmt.Printf("Failed to open UDP socket for sending\n")
+		return nil
+	}
+	sendRx, sendTx, err := os.Pipe()
+	// recvRx, recvTx, err := os.Pipe()
+	if err != nil {
+		return nil
+	}
+	rxShutdown := make(chan struct{})
+	sendbuf := make([]byte, 1024)
+	go func() { // the sender
+		defer sendRx.Close()
+		for {
+			select {
+			case _ = <-rxShutdown:
+				return
+			default:
+			}
+			count, err := sendRx.Read(sendbuf)
+			if err == io.EOF {
+				rxShutdown <- struct{}{}
+			}
+			fmt.Printf("Sent %d bytes to connection\n", count)
+			udpSocket.Write(sendbuf[:count])
+		}
+	}()
+	// recvbuf := make([]byte, 1024)
+	// go func() { // the receiver
+	// 	defer func() {
+	// 		fmt.Printf("Closing recvTx\n")
+	// 		recvTx.Close()
+	// 	}()
+	// 	for {
+	// 		select {
+	// 		case _ = <-rxShutdown:
+	// 			return
+	// 		default:
+	// 		}
+	// 		count, err := conn.Read(recvbuf)
+	// 		if err == io.EOF {
+	// 			rxShutdown <- struct{}{}
+	// 		}
+	// 		fmt.Printf("Received %d bytes from connection\n", count)
+	// 		recvTx.Write(recvbuf[:count])
+	// 	}
+	// }()
+	return sendTx
+
+}
+
+func openInTunnelICMP(tunnelHandle int32, address string) (*os.File, *os.File) {
+	handle, ok := tunnelHandles[tunnelHandle]
+	if !ok || handle.virtualNet == nil {
+		return nil, nil
+	}
+	conn, _ := handle.virtualNet.Dial("ping4", address)
+	sendRx, sendTx, err := os.Pipe()
+	recvRx, recvTx, err := os.Pipe()
+	if err != nil {
+		return nil, nil
+	}
+	// unix.SetNonblock(int(recvRx.Fd()), false)
+	rxShutdown := make(chan struct{})
+	sendbuf := make([]byte, 1024)
+	go func() { // the sender
+		defer sendRx.Close()
+		for {
+			select {
+			case _ = <-rxShutdown:
+				return
+			default:
+			}
+			count, err := sendRx.Read(sendbuf)
+			if err == io.EOF {
+				rxShutdown <- struct{}{}
+			}
+			fmt.Printf("Sent %d bytes to connection\n", count)
+			conn.Write(sendbuf[:count])
+		}
+	}()
+	recvbuf := make([]byte, 1024)
+	go func() { // the receiver
+		defer func() {
+			fmt.Printf("Closing recvTx\n")
+			recvTx.Close()
+		}()
+		for {
+			select {
+			case _ = <-rxShutdown:
+				return
+			default:
+			}
+			count, err := conn.Read(recvbuf)
+			if err == io.EOF {
+				rxShutdown <- struct{}{}
+			}
+			fmt.Printf("Received %d bytes from connection\n", count)
+			recvTx.Write(recvbuf[:count])
+		}
+	}()
+	return recvRx, sendTx
+}
+
 func wgOpenInTunnelICMP(tunnelHandle int32, address string, recv_fd *uintptr, send_fd *uintptr) int {
 	handle, ok := tunnelHandles[tunnelHandle]
 	if !ok || handle.virtualNet == nil {
@@ -400,37 +511,45 @@ func wgOpenInTunnelICMP(tunnelHandle int32, address string, recv_fd *uintptr, se
 	if err != nil {
 		return -1
 	}
-	unix.SetNonblock(int(recvRx.Fd()), false)
+	// unix.SetNonblock(int(recvRx.Fd()), false)
 	sendbuf := make([]byte, 1024)
 	rxShutdown := make(chan struct{})
 	go func() { // the sender
 		defer sendRx.Close()
-		select {
-		case _ = <-rxShutdown:
-			return
-		default:
+		for {
+
+			select {
+			case _ = <-rxShutdown:
+				return
+			default:
+			}
+			count, err := sendRx.Read(sendbuf)
+			if err == io.EOF {
+				rxShutdown <- struct{}{}
+			}
+			fmt.Printf("Sent %d bytes to connection\n", count)
+			conn.Write(sendbuf[:count])
 		}
-		count, err := sendRx.Read(sendbuf)
-		if err == io.EOF {
-			rxShutdown <- struct{}{}
-		}
-		fmt.Printf("Sent %d bytes to connection\n", count)
-		conn.Write(sendbuf[:count])
 	}()
 	recvbuf := make([]byte, 1024)
 	go func() { // the receiver
-		defer recvTx.Close()
-		select {
-		case _ = <-rxShutdown:
-			return
-		default:
+		defer func() {
+			fmt.Printf("Closing recvTx\n")
+			recvTx.Close()
+		}()
+		for {
+			select {
+			case _ = <-rxShutdown:
+				return
+			default:
+			}
+			count, err := conn.Read(recvbuf)
+			if err == io.EOF {
+				rxShutdown <- struct{}{}
+			}
+			fmt.Printf("Received %d bytes from connection\n", count)
+			recvTx.Write(recvbuf[:count])
 		}
-		count, err := conn.Read(recvbuf)
-		if err == io.EOF {
-			rxShutdown <- struct{}{}
-		}
-		fmt.Printf("Received %d bytes from connection\n", count)
-		recvTx.Write(recvbuf[:count])
 	}()
 	*recv_fd = recvRx.Fd()
 	*send_fd = sendTx.Fd()

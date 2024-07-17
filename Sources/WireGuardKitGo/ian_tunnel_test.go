@@ -1,11 +1,15 @@
 package main
 
 import (
+	"crypto/rand"
 	"fmt"
+	"io"
 	"log"
 	"net/netip"
 	"os"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"golang.org/x/net/icmp"
@@ -85,6 +89,250 @@ import (
 
 // ICMP code; move this elsewhere later
 
+func TestUDPSanityDirect(t *testing.T) {
+	// Set up UDP directly, as a sanity check that things work as expected
+
+	// result 1: this works fine with no router, just two interfaces
+	// result 2: this works fine with a router, through its virtual interface
+	// result 3: through a os.Pipe handled by a goroutine: works fine
+	a, _, _ := netstack.CreateNetTUN([]netip.Addr{aIp}, []netip.Addr{}, 1280)
+	aVirtual, aNet, _ := netstack.CreateNetTUN([]netip.Addr{aIp}, []netip.Addr{}, 1280)
+	router := NewRouter(a, aVirtual)
+
+	b, bNet, _ := netstack.CreateNetTUN([]netip.Addr{bIp}, []netip.Addr{}, 1280)
+	aDev := device.NewDevice(&router, conn.NewStdNetBind(), device.NewLogger(device.LogLevelSilent, ""))
+	bDev := device.NewDevice(b, conn.NewStdNetBind(), device.NewLogger(device.LogLevelSilent, ""))
+
+	configs, endpointConfigs := genConfigs(t)
+	aConfig := configs[0] + endpointConfigs[0]
+	bConfig := configs[1] + endpointConfigs[1]
+	aDev.IpcSet(aConfig)
+	bDev.IpcSet(bConfig)
+
+	aDev.Up()
+	bDev.Up()
+
+	listener, err := bNet.ListenUDPAddrPort(netip.AddrPortFrom(bIp, 1000))
+	if err != nil {
+		t.Fatal("Failed to open UDP socket for listening")
+	}
+
+	sendSocket, err := aNet.DialUDPAddrPort(netip.AddrPort{}, netip.AddrPortFrom(bIp, 1000))
+	if err != nil {
+		t.Fatal("Failed to open UDP socket for sending")
+	}
+
+	sendRx, sendTx, err := os.Pipe()
+	rxShutdown := make(chan struct{})
+	sendbuf := make([]byte, 1024)
+
+	go func() { // the sender
+		defer sendRx.Close()
+		for {
+			select {
+			case _ = <-rxShutdown:
+				return
+			default:
+			}
+			count, err := sendRx.Read(sendbuf)
+			if err == io.EOF {
+				rxShutdown <- struct{}{}
+			}
+			sendSocket.Write(sendbuf[:count])
+		}
+	}()
+
+	size := 20
+	txBytes := make([]byte, size)
+	rxBytes := make([]byte, size)
+	rand.Read(txBytes[:])
+
+	numWritten, err := sendTx.Write(txBytes)
+	assert.Nil(t, err)
+	assert.Equal(t, numWritten, size)
+
+	numRead, err := listener.Read(rxBytes)
+	assert.Nil(t, err)
+	assert.Equal(t, numRead, size)
+
+	assert.Equal(t, txBytes, rxBytes)
+}
+
+func TestUDPReplicatePipe(t *testing.T) {
+	// set up a tunnel handle but unroll its functionality
+	a, _, _ := netstack.CreateNetTUN([]netip.Addr{aIp}, []netip.Addr{}, 1280)
+	b, bNet, _ := netstack.CreateNetTUN([]netip.Addr{bIp}, []netip.Addr{}, 1280)
+
+	configs, endpointConfigs := genConfigs(t)
+	aConfig := configs[0] + endpointConfigs[0]
+	bConfig := configs[1] + endpointConfigs[1]
+
+	tunnel := wgTurnOnIANFromExistingTunnel(a, aConfig, aIp)
+
+	bDev := device.NewDevice(b, conn.NewStdNetBind(), device.NewLogger(device.LogLevelSilent, ""))
+
+	bDev.IpcSet(bConfig)
+
+	bDev.Up()
+
+	listener, err := bNet.ListenUDPAddrPort(netip.AddrPortFrom(bIp, 1000))
+	if err != nil {
+		t.Fatal("Failed to open UDP socket for listening")
+	}
+
+	aNet := tunnelHandles[tunnel].virtualNet
+
+	sendSocket, err := aNet.DialUDPAddrPort(netip.AddrPort{}, netip.AddrPortFrom(bIp, 1000))
+	if err != nil {
+		t.Fatal("Failed to open UDP socket for sending")
+	}
+
+	sendRx, sendTx, err := os.Pipe()
+	rxShutdown := make(chan struct{})
+	sendbuf := make([]byte, 1024)
+
+	go func() { // the sender
+		defer sendRx.Close()
+		for {
+			select {
+			case _ = <-rxShutdown:
+				return
+			default:
+			}
+			count, err := sendRx.Read(sendbuf)
+			if err == io.EOF {
+				rxShutdown <- struct{}{}
+			}
+			sendSocket.Write(sendbuf[:count])
+		}
+	}()
+
+	size := 20
+	txBytes := make([]byte, size)
+	rxBytes := make([]byte, size)
+	rand.Read(txBytes[:])
+
+	numWritten, err := sendTx.Write(txBytes)
+	assert.Nil(t, err)
+	assert.Equal(t, numWritten, size)
+
+	numRead, err := listener.Read(rxBytes)
+	assert.Nil(t, err)
+	assert.Equal(t, numRead, size)
+
+	assert.Equal(t, txBytes, rxBytes)
+}
+
+func TestUDPPipe(t *testing.T) {
+	a, _, _ := netstack.CreateNetTUN([]netip.Addr{aIp}, []netip.Addr{}, 1280)
+	b, bNet, _ := netstack.CreateNetTUN([]netip.Addr{bIp}, []netip.Addr{}, 1280)
+	// _ := device.NewDevice(a, conn.NewStdNetBind(), device.NewLogger(device.LogLevelSilent, ""))
+	bDev := device.NewDevice(b, conn.NewStdNetBind(), device.NewLogger(device.LogLevelVerbose, ""))
+
+	configs, endpointConfigs := genConfigs(t)
+	aConfig := configs[0] + endpointConfigs[0]
+	tunnel := wgTurnOnIANFromExistingTunnel(a, aConfig, aIp)
+	bDev.Up()
+
+	listener, err := bNet.ListenUDPAddrPort(netip.AddrPortFrom(bIp, 1000))
+	if err != nil {
+		t.Fatal("Failed to open UDP socket for listening")
+	}
+
+	sendPipe := testOpenInTunnelUDP(tunnel, netip.MustParseAddrPort("1.2.3.5:1000"))
+
+	size := 20
+	txBytes := make([]byte, size)
+	rxBytes := make([]byte, size)
+	rand.Read(txBytes[:])
+
+	numWritten, err := sendPipe.Write(txBytes)
+
+	go func() {
+		numRead, err := listener.Read(rxBytes)
+		if err != nil {
+			t.Fatal("Failed to read from listening socket")
+		}
+		fmt.Printf("%d bytes read\n", numRead)
+		assert.Equal(t, numRead, size)
+	}()
+
+	if err != nil {
+		t.Fatal("Failed to send UDP packet")
+	}
+	assert.Equal(t, numWritten, size)
+	time.Sleep(1)
+	assert.Equal(t, txBytes[:size], rxBytes[:size])
+}
+
+func TestOpenInTunnelICMPPipes(t *testing.T) {
+	a, _, _ := netstack.CreateNetTUN([]netip.Addr{aIp}, []netip.Addr{}, 1280)
+
+	b, bNet, _ := netstack.CreateNetTUN([]netip.Addr{bIp}, []netip.Addr{}, 1280)
+
+	// _ := device.NewDevice(a, conn.NewStdNetBind(), device.NewLogger(device.LogLevelSilent, ""))
+	bDev := device.NewDevice(b, conn.NewStdNetBind(), device.NewLogger(device.LogLevelVerbose, ""))
+
+	configs, endpointConfigs := genConfigs(t)
+	aConfig := configs[0] + endpointConfigs[0]
+	// bConfig := configs[1] + endpointConfigs[1]
+
+	tunnel := wgTurnOnIANFromExistingTunnel(a, aConfig, aIp)
+
+	// configureDevices(t, aDev, bDev)
+
+	bDev.Up()
+
+	recvRx, sendTx := openInTunnelICMP(tunnel, "1.2.3.5")
+
+	go func() {
+		// Start accepting ICMP connections on B, and reply as if for pings
+		pingConn, _ := bNet.ListenPing(netstack.PingAddrFromAddr(bIp))
+		pingBuf := make([]byte, 1024)
+		n, _ := pingConn.Read(pingBuf)
+
+		fmt.Printf("- read %d bytes\n", n)
+
+		reply := icmp.Message{
+			Type: ipv4.ICMPTypeEcho,
+			Body: &icmp.Echo{
+				ID:   1234,
+				Seq:  1,
+				Data: make([]byte, 4),
+			},
+		}
+
+		replyBuf, _ := reply.Marshal(nil)
+		pingConn.Write(replyBuf)
+
+	}()
+
+	ping := icmp.Message{
+		Type: ipv4.ICMPTypeEcho,
+		Body: &icmp.Echo{
+			ID:   1234,
+			Seq:  1,
+			Data: make([]byte, 4),
+		},
+	}
+	pingBytes, err := ping.Marshal(nil)
+	if err != nil {
+		log.Fatal("ping.Marshal failed")
+	}
+
+	sendTx.Write(pingBytes)
+
+	readBuf := make([]byte, 1024)
+	// numRead, err := recvFile.Read(readBuf)
+	numRead, err := recvRx.Read(readBuf)
+
+	fmt.Printf("err = %v\n", err)
+
+	assert.Greater(t, numRead, 0)
+
+	fmt.Printf("bytes received: %d\n", numRead)
+}
+
 func TestOpenInTunnelICMP(t *testing.T) {
 
 	a, _, _ := netstack.CreateNetTUN([]netip.Addr{aIp}, []netip.Addr{}, 1280)
@@ -109,8 +357,8 @@ func TestOpenInTunnelICMP(t *testing.T) {
 
 	// do the test here
 	wgOpenInTunnelICMP(tunnel, "1.2.3.5", &recv_fd, &send_fd)
-	sendFile := os.NewFile(send_fd, "send")
-	recvFile := os.NewFile(recv_fd, "recv")
+	// sendFile := os.NewFile(send_fd, "send")
+	// recvFile := os.NewFile(recv_fd, "recv")
 
 	// listen for ICMP connections on interface B
 
@@ -132,14 +380,22 @@ func TestOpenInTunnelICMP(t *testing.T) {
 	if err != nil {
 		log.Fatal("ping.Marshal failed")
 	}
-	sendFile.Write(pingBytes)
+	// sendFile.Write(pingBytes)
+	syscall.Write(int(send_fd), pingBytes)
 
-	var readBuf []byte
-	numRead, err := recvFile.Read(readBuf)
+	// time.Sleep(1)
+	// sendFile.Write(pingBytes)
+
+	readBuf := make([]byte, 1024)
+	// numRead, err := recvFile.Read(readBuf)
+
+	numRead, err := syscall.Read(int(recv_fd), readBuf)
+
+	fmt.Printf("err = %v\n", err)
 
 	assert.Greater(t, numRead, 0)
 
-	fmt.Printf("bytes received: %d", numRead)
+	fmt.Printf("bytes received: %d\n", numRead)
 
 	// parse the packet, check that ID and Seq match up
 
