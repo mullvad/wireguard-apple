@@ -389,22 +389,32 @@ func wgDisableSomeRoamingForBrokenMobileSemantics(tunnelHandle int32) {
 	}
 }
 
-func testOpenInTunnelUDP(tunnelHandle int32, addrPort netip.AddrPort) *os.File {
+func testOpenInTunnelUDP(tunnelHandle int32, sendAddrPort, recvAddrPort netip.AddrPort) (*os.File, *os.File) {
 	handle, ok := tunnelHandles[tunnelHandle]
 	if !ok || handle.virtualNet == nil {
-		return nil
+		return nil, nil
 	}
 
-	udpSocket, err := handle.virtualNet.DialUDPAddrPort(netip.AddrPort{}, addrPort)
+	sender, err := handle.virtualNet.DialUDPAddrPort(netip.AddrPort{}, sendAddrPort)
 	if err != nil {
 		fmt.Printf("Failed to open UDP socket for sending\n")
-		return nil
+		return nil, nil
+	}
+	listener, err := handle.virtualNet.ListenUDPAddrPort(recvAddrPort)
+	fmt.Printf("-- Listening on %v\n", recvAddrPort)
+	if err != nil {
+		return nil, nil
 	}
 	sendRx, sendTx, err := os.Pipe()
-	// recvRx, recvTx, err := os.Pipe()
 	if err != nil {
-		return nil
+		return nil, nil
 	}
+	recvRx, recvTx, err := os.Pipe()
+	if err != nil {
+		sendTx.Close()
+		return nil, nil
+	}
+
 	rxShutdown := make(chan struct{})
 	sendbuf := make([]byte, 1024)
 	go func() { // the sender
@@ -412,6 +422,7 @@ func testOpenInTunnelUDP(tunnelHandle int32, addrPort netip.AddrPort) *os.File {
 		for {
 			select {
 			case _ = <-rxShutdown:
+				fmt.Printf("*** closing down")
 				return
 			default:
 			}
@@ -420,30 +431,31 @@ func testOpenInTunnelUDP(tunnelHandle int32, addrPort netip.AddrPort) *os.File {
 				rxShutdown <- struct{}{}
 			}
 			fmt.Printf("Sent %d bytes to connection\n", count)
-			udpSocket.Write(sendbuf[:count])
+			sender.Write(sendbuf[:count])
 		}
 	}()
-	// recvbuf := make([]byte, 1024)
-	// go func() { // the receiver
-	// 	defer func() {
-	// 		fmt.Printf("Closing recvTx\n")
-	// 		recvTx.Close()
-	// 	}()
-	// 	for {
-	// 		select {
-	// 		case _ = <-rxShutdown:
-	// 			return
-	// 		default:
-	// 		}
-	// 		count, err := conn.Read(recvbuf)
-	// 		if err == io.EOF {
-	// 			rxShutdown <- struct{}{}
-	// 		}
-	// 		fmt.Printf("Received %d bytes from connection\n", count)
-	// 		recvTx.Write(recvbuf[:count])
-	// 	}
-	// }()
-	return sendTx
+	recvbuf := make([]byte, 1024)
+	go func() { // the receiver
+		defer func() {
+			fmt.Printf("Closing recvTx\n")
+			recvTx.Close()
+		}()
+		for {
+			select {
+			case _ = <-rxShutdown:
+				return
+			default:
+				fmt.Printf("Waiting to receive data\n")
+				count, _ := listener.Read(recvbuf)
+				// if err == io.EOF {
+				// 	rxShutdown <- struct{}{}
+				// }
+				fmt.Printf("Received %d bytes from connection\n", count)
+				recvTx.Write(recvbuf[:count])
+			}
+		}
+	}()
+	return sendTx, recvRx
 
 }
 

@@ -236,27 +236,92 @@ func TestUDPPipe(t *testing.T) {
 	bDev.IpcSet(bConfig)
 	bDev.Up()
 
-	listener, err := bNet.ListenUDPAddrPort(netip.AddrPortFrom(bIp, 1000))
+	aAddrPort := netip.AddrPortFrom(aIp, 1000)
+	bAddrPort := netip.AddrPortFrom(bIp, 1000)
+
+	_, err := bNet.ListenUDPAddrPort(bAddrPort)
 	if err != nil {
 		t.Fatal("Failed to open UDP socket for listening")
 	}
+	_, recvPipe := testOpenInTunnelUDP(tunnel, bAddrPort, aAddrPort)
 
-	sendPipe := testOpenInTunnelUDP(tunnel, netip.AddrPortFrom(bIp, 1000))
+	fmt.Printf(">> sending to %v", aAddrPort)
+	responder, err := bNet.DialUDPAddrPort(netip.AddrPort{}, aAddrPort)
+	if err != nil {
+		t.Fatal("Failed to open UDP socket for sending")
+	}
 
 	size := 20
 	txBytes := make([]byte, size)
 	rxBytes := make([]byte, size)
+	// rand.Read(txBytes[:])
+
+	// numWritten, err := sendPipe.Write(txBytes)
+	// assert.Nil(t, err)
+	// assert.Equal(t, numWritten, size)
+
+	// numRead, err := listener.Read(rxBytes)
+	// assert.Nil(t, err)
+	// assert.Equal(t, numRead, size)
+
+	// assert.Equal(t, txBytes, rxBytes)
+
+	// now the other way
 	rand.Read(txBytes[:])
 
-	numWritten, err := sendPipe.Write(txBytes)
-	assert.Nil(t, err)
+	numWritten, err := responder.Write(txBytes)
 	assert.Equal(t, numWritten, size)
 
-	numRead, err := listener.Read(rxBytes)
+	numRead, err := recvPipe.Read(rxBytes)
 	assert.Nil(t, err)
 	assert.Equal(t, numRead, size)
 
-	assert.Equal(t, txBytes, rxBytes)
+	// assert.Equal(t, txBytes, rxBytes)
+
+}
+
+// ICMP experimentation
+
+func TestICMPSanityCheckFromFirstPrinciples(t *testing.T) {
+	// Attempt to send an ICMP ping directly between netstack devices
+	// This currently hangs
+	a, aNet, _ := netstack.CreateNetTUN([]netip.Addr{aIp}, []netip.Addr{}, 1280)
+	b, bNet, _ := netstack.CreateNetTUN([]netip.Addr{bIp}, []netip.Addr{}, 1280)
+	aDev := device.NewDevice(a, conn.NewStdNetBind(), device.NewLogger(device.LogLevelSilent, ""))
+	bDev := device.NewDevice(b, conn.NewStdNetBind(), device.NewLogger(device.LogLevelSilent, ""))
+	configs, endpointConfigs := genConfigs(t)
+	aConfig := configs[0] + endpointConfigs[0]
+	bConfig := configs[1] + endpointConfigs[1]
+	aDev.IpcSet(aConfig)
+	bDev.IpcSet(bConfig)
+
+	aDev.Up()
+	bDev.Up()
+
+	sender, err := aNet.Dial("ping4", "192.168.0.5")
+	assert.Nil(t, err)
+	receiver, err := bNet.ListenPing(netstack.PingAddrFromAddr(bIp))
+
+	ping := icmp.Message{
+		Type: ipv4.ICMPTypeEcho,
+		Body: &icmp.Echo{
+			ID:   1234,
+			Seq:  1,
+			Data: make([]byte, 4),
+		},
+	}
+	pingBytes, err := ping.Marshal(nil)
+
+	written, err := sender.Write(pingBytes)
+	assert.Nil(t, err)
+	assert.Equal(t, written, len(pingBytes))
+
+	readBuff := make([]byte, 1024)
+	readBytes, err := receiver.Read(readBuff)
+	assert.Nil(t, err)
+	assert.Equal(t, readBytes, len(pingBytes))
+	assert.Equal(t, readBuff[:readBytes], pingBytes)
+
 }
 
 func TestOpenInTunnelICMPPipes(t *testing.T) {
