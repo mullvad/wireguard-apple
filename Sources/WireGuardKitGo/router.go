@@ -300,22 +300,22 @@ func (r *routerRead) readWorker(device tun.Device, isVirtual bool) {
 	defer r.waitGroup.Done()
 	for r.error == nil {
 		select {
-		case _, ok := <-r.rxShutdown:
-			if ok {
-				return
-			}
+		case _, _ = <-r.rxShutdown:
+			return
 		default:
 		}
 		batch := r.batchPool.Get().(*PacketBatch)
 		_, err := device.Read(batch.packets, batch.sizes, 0)
 		if err != nil {
 			r.batchPool.Put(batch)
-			r.errorChannel <- err
+			select {
+			case r.errorChannel <- err:
+			}
 			return
 		}
 		batch.isVirtual = isVirtual
 		select {
-		case _ = <-r.rxShutdown:
+		case _, _ = <-r.rxShutdown:
 			return
 		case r.rxChannel <- batch:
 		}
