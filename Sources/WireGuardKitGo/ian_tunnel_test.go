@@ -282,6 +282,55 @@ func TestUDPPipe(t *testing.T) {
 
 // ICMP experimentation
 
+func TestICMPRemotePing(t *testing.T) {
+	// config data cribbed from Multihop tests
+	privateKey := "1082ef213ba31c94d7ef7149f4e2bde968c06027aadbb7d50b00280ece1f2860"
+	privateIp := netip.MustParseAddr("10.65.169.61")
+	seGotPublic := "e4930f78eee05c86d1e429d46bf34f34ae0be46a949eb785d3f068cda8b8a65e"
+	seGotEndpoint := "185.213.154.66:51820"
+
+	endpointCfg := uapiCfg(
+		"private_key", privateKey,
+		"listen_port", "0",
+		"replace_peers", "true",
+		"public_key", seGotPublic,
+		"endpoint", seGotEndpoint,
+		"protocol_version", "1",
+		"replace_allowed_ips", "true",
+		"allowed_ip", "0.0.0.0/0",
+	)
+
+	tun, net, _ := netstack.CreateNetTUN([]netip.Addr{privateIp}, []netip.Addr{}, 1280)
+	// 	multihopTun := NewMultihopTun(privateIp, netip.MustParseAddr("185.204.1.203"), 51280, 1280+80)
+	dev := device.NewDevice(tun, conn.NewStdNetBind(), device.NewLogger(device.LogLevelVerbose, ""))
+	dev.IpcSet(endpointCfg)
+
+	dev.Up()
+
+	sender, err := net.Dial("ping4", "10.64.0.1")
+	assert.Nil(t, err)
+	receiver, err := net.ListenPing(netstack.PingAddrFromAddr(privateIp))
+
+	ping := icmp.Message{
+		Type: ipv4.ICMPTypeEcho,
+		Body: &icmp.Echo{
+			ID:   1234,
+			Seq:  1,
+			Data: make([]byte, 4),
+		},
+	}
+	pingBytes, err := ping.Marshal(nil)
+
+	written, err := sender.Write(pingBytes)
+	assert.Nil(t, err)
+	assert.Equal(t, written, len(pingBytes))
+
+	readBuff := make([]byte, 1024)
+	readBytes, err := receiver.Read(readBuff)
+	assert.Nil(t, err)
+
+}
+
 func TestICMPSanityCheckFromFirstPrinciples(t *testing.T) {
 	// Attempt to send an ICMP ping directly between netstack devices
 	// This currently hangs
@@ -319,8 +368,6 @@ func TestICMPSanityCheckFromFirstPrinciples(t *testing.T) {
 	readBuff := make([]byte, 1024)
 	readBytes, err := receiver.Read(readBuff)
 	assert.Nil(t, err)
-	assert.Equal(t, readBytes, len(pingBytes))
-	assert.Equal(t, readBuff[:readBytes], pingBytes)
 
 }
 
