@@ -328,7 +328,7 @@ func TestICMPRemotePing(t *testing.T) {
 	readBuff := make([]byte, 1024)
 	readBytes, err := receiver.Read(readBuff)
 	assert.Nil(t, err)
-
+	assert.Greater(t, readBytes, 0)
 }
 
 func TestICMPSanityCheckFromFirstPrinciples(t *testing.T) {
