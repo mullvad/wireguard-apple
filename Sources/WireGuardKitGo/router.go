@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/binary"
 	"errors"
+	"io"
 	"net/netip"
 	"os"
 	"sync"
@@ -82,8 +83,7 @@ func (r *Router) BatchSize() int {
 func (r *Router) Close() error {
 	// TODO: anything else we need to shut down here
 	// This is doubled to shut down both readWorker goroutines
-	r.read.rxShutdown <- struct{}{}
-	r.read.rxShutdown <- struct{}{}
+	close(r.read.rxShutdown)
 	err1 := r.real.Close()
 	err2 := r.virtual.Close()
 	r.read.waitGroup.Wait()
@@ -214,6 +214,8 @@ func (r *Router) Read(bufs [][]byte, sizes []int, offset int) (n int, err error)
 	} else {
 		var ok bool
 		select {
+		case _, _ = <-r.read.rxShutdown:
+			return 0, io.EOF
 		case err = <-r.read.errorChannel:
 			r.read.error = err
 			return 0, err
@@ -314,11 +316,21 @@ func (r *routerRead) readWorker(device tun.Device, isVirtual bool) {
 		_, err := device.Read(batch.packets, batch.sizes, defaultOffset)
 		if err != nil {
 			r.batchPool.Put(batch)
-			r.errorChannel <- err
+			select {
+			case r.errorChannel <- err:
+				break
+			case _, _ = <- r.rxShutdown:
+				break
+			}
 			return
 		}
 		batch.isVirtual = isVirtual
-		r.rxChannel <- batch
+		select {
+		case _, _ = <- r.rxShutdown:
+			return
+		case 	r.rxChannel <- batch:
+			break
+		}
 	}
 }
 
