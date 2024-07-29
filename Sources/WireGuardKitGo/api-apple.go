@@ -15,6 +15,7 @@ import "C"
 
 import (
 	"bufio"
+	"encoding/hex"
 	"fmt"
 	"math"
 	"net/netip"
@@ -46,6 +47,10 @@ const (
 	errDeviceLimitHit
 	errGetMtu
 	errNoEndpointInConfig
+	// Configuration for a given device contains no peers. It is peerless.
+	errBadEntryConfig
+	// After applying a configuration to a given WireGuard device, it fails to return a peer it was configured to have.
+	errNoPeer
 )
 
 var loggerFunc unsafe.Pointer
@@ -102,7 +107,7 @@ func wgSetLogger(context, loggerFn uintptr) {
 	loggerFunc = unsafe.Pointer(loggerFn)
 }
 
-func wgTurnOnMultihopInner(tun tun.Device, exitSettings *C.char, entrySettings *C.char, privateIp *C.char, exitMtu int, logger *device.Logger) int32 {
+func wgTurnOnMultihopInner(tun tun.Device, exitSettings *C.char, entrySettings *C.char, privateIp *C.char, exitMtu int, logger *device.Logger, maybenotMachines *C.char, maybeNotMaxEvents uint, maybeNotMaxActons uint) int32 {
 	ip, err := netip.ParseAddr(C.GoString(privateIp))
 	if err != nil {
 		logger.Errorf("Failed to parse private IP: %v", err)
@@ -111,7 +116,7 @@ func wgTurnOnMultihopInner(tun tun.Device, exitSettings *C.char, entrySettings *
 	}
 
 	exitConfigString := C.GoString(exitSettings)
-	exitEndpoint := parseEndpointFromGoConfig(exitConfigString)
+	exitEndpoint := parseEndpointFromConfig(exitConfigString)
 	if exitEndpoint == nil {
 		tun.Close()
 		return errNoEndpointInConfig
@@ -122,11 +127,30 @@ func wgTurnOnMultihopInner(tun tun.Device, exitSettings *C.char, entrySettings *
 	exitDev := device.NewDevice(tun, singletun.Binder(), logger)
 	entryDev := device.NewDevice(&singletun, conn.NewStdNetBind(), logger)
 
-	err = entryDev.IpcSet(C.GoString(entrySettings))
+	entryConfigString := C.GoString(entrySettings)
+
+	err = entryDev.IpcSet(entryConfigString)
 	if err != nil {
 		logger.Errorf("Unable to set IPC settings for entry: %v", err)
 		tun.Close()
 		return errBadWgConfig
+	}
+	// Enable DAITA if DAITA parameters are passed through
+	if maybenotMachines != nil {
+		entryPeerPubkey := parseFirstPubkeyFromConfig(entryConfigString)
+		if entryPeerPubkey == nil {
+			return errBadEntryConfig
+		}
+		peer := entryDev.LookupPeer(*entryPeerPubkey)
+		if peer == nil {
+			return errNoPeer
+		}
+
+		const maxPaddingBytes = 0.0
+		const maxBlockingBytes = 0.0
+
+		peer.EnableDaita(C.GoString(maybenotMachines), maybeNotMaxEvents, maybeNotMaxActons, maxPaddingBytes, maxBlockingBytes)
+
 	}
 
 	err = exitDev.IpcSet(exitConfigString)
@@ -154,8 +178,28 @@ func wgTurnOnMultihopInner(tun tun.Device, exitSettings *C.char, entrySettings *
 	return i
 }
 
+func parseFirstPubkeyFromConfig(config string) *device.NoisePublicKey {
+	scanner := bufio.NewScanner(strings.NewReader(config))
+	for scanner.Scan() {
+		line := scanner.Text()
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+
+		if key == "public_key" {
+			pubkey, err := hex.DecodeString(value)
+			if err == nil {
+				key := device.NoisePublicKey(pubkey)
+				return &key
+			}
+		}
+	}
+	return nil
+}
+
 //export wgTurnOnMultihop
-func wgTurnOnMultihop(exitSettings *C.char, entrySettings *C.char, privateIp *C.char, tunFd int32) int32 {
+func wgTurnOnMultihop(exitSettings *C.char, entrySettings *C.char, privateIp *C.char, tunFd int32, maybenotMachines *C.char, maybeNotMaxEvents uint, maybeNotMaxActons uint) int32 {
 	logger := &device.Logger{
 		Verbosef: CLogger(0).Printf,
 		Errorf:   CLogger(1).Printf,
@@ -186,7 +230,7 @@ func wgTurnOnMultihop(exitSettings *C.char, entrySettings *C.char, privateIp *C.
 		return errGetMtu
 	}
 
-	return wgTurnOnMultihopInner(tun, exitSettings, entrySettings, privateIp, exitMtu, logger)
+	return wgTurnOnMultihopInner(tun, exitSettings, entrySettings, privateIp, exitMtu, logger, maybenotMachines, maybeNotMaxEvents, maybeNotMaxActons)
 
 }
 
@@ -422,7 +466,7 @@ func main() {}
 
 // Parse a wireguard config and return the first endpoint address it finds and
 // parses successfully.
-func parseEndpointFromGoConfig(config string) *netip.AddrPort {
+func parseEndpointFromConfig(config string) *netip.AddrPort {
 	scanner := bufio.NewScanner(strings.NewReader(config))
 	for scanner.Scan() {
 		line := scanner.Text()

@@ -20,4 +20,4 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace golang.zx2c4.com/wireguard => github.com/mullvad/wireguard-go v0.0.0-20240722122257-74f4174d3b58
+replace golang.zx2c4.com/wireguard => ./wireguard-go
