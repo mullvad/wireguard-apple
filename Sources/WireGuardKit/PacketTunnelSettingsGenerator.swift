@@ -217,3 +217,7 @@ class PacketTunnelSettingsGenerator {
             }
     }
 }
+
+struct DAITAConfig {
+    let machines: Data
+}

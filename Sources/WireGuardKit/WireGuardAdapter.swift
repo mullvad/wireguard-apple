@@ -433,7 +433,7 @@ public class WireGuardAdapter {
         let privateAddr = "\(privateAddress)"
 
         let handle = if let entryWgConfig {
-            wgTurnOnMultihop(exitWgConfig, entryWgConfig, privateAddr, tunnelFileDescriptor)
+            wgTurnOnMultihop(exitWgConfig, entryWgConfig, privateAddr, tunnelFileDescriptor, nil, 0, 0)
         } else {
             wgTurnOn(exitWgConfig, tunnelFileDescriptor)
         }
