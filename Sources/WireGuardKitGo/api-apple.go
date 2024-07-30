@@ -112,6 +112,7 @@ func wgTurnOnMultihopInner(tun tun.Device, exitSettings *C.char, entrySettings *
 	}
 
 	exitConfigString := C.GoString(exitSettings)
+	entryConfigString := C.GoString(entrySettings)
 	exitEndpoint := parseEndpointFromGoConfig(exitConfigString)
 	if exitEndpoint == nil {
 		tun.Close()
@@ -123,36 +124,7 @@ func wgTurnOnMultihopInner(tun tun.Device, exitSettings *C.char, entrySettings *
 	exitDev := device.NewDevice(tun, singletun.Binder(), logger)
 	entryDev := device.NewDevice(&singletun, conn.NewStdNetBind(), logger)
 
-	err = entryDev.IpcSet(C.GoString(entrySettings))
-	if err != nil {
-		logger.Errorf("Unable to set IPC settings for entry: %v", err)
-		tun.Close()
-		return errBadWgConfig
-	}
-
-	err = exitDev.IpcSet(exitConfigString)
-	if err != nil {
-		logger.Errorf("Unable to set IPC settings for exit: %v", err)
-		tun.Close()
-		return errBadWgConfig
-	}
-
-	exitDev.Up()
-	entryDev.Up()
-	logger.Verbosef("Device started")
-
-	var i int32
-	for i = 0; i < math.MaxInt32; i++ {
-		if _, exists := tunnelHandles[i]; !exists {
-			break
-		}
-	}
-	if i == math.MaxInt32 {
-		tun.Close()
-		return errDeviceLimitHit
-	}
-	tunnelHandles[i] = tunnelHandle{exitDev, entryDev, logger, nil}
-	return i
+	return addTunnelFromDevice(exitDev, entryDev, exitConfigString, entryConfigString, nil, logger)
 }
 
 //export wgTurnOnMultihop
@@ -162,23 +134,9 @@ func wgTurnOnMultihop(exitSettings *C.char, entrySettings *C.char, privateIp *C.
 		Errorf:   CLogger(1).Printf,
 	}
 
-	dupTunFd, err := unix.Dup(int(tunFd))
-	if err != nil {
-		logger.Errorf("Unable to dup tun fd: %v", err)
-		return errDup
-	}
-
-	err = unix.SetNonblock(dupTunFd, true)
-	if err != nil {
-		logger.Errorf("Unable to set tun fd as non blocking: %v", err)
-		unix.Close(dupTunFd)
-		return errSetNonblock
-	}
-	tun, err := tun.CreateTUNFromFile(os.NewFile(uintptr(dupTunFd), "/dev/tun"), 0)
-	if err != nil {
-		logger.Errorf("Unable to create new tun device from fd: %v", err)
-		unix.Close(dupTunFd)
-		return errCreateTun
+	tun, errCode := openTUNFromSocket(tunFd, logger)
+	if tun == nil {
+		return errCode
 	}
 
 	exitMtu, err := tun.MTU()
@@ -191,40 +149,56 @@ func wgTurnOnMultihop(exitSettings *C.char, entrySettings *C.char, privateIp *C.
 
 }
 
-func openTUNFromSocket(tunFd int32, logger *device.Logger) tun.Device {
+func openTUNFromSocket(tunFd int32, logger *device.Logger) (tun.Device, int32) {
 
 	dupTunFd, err := unix.Dup(int(tunFd))
 	if err != nil {
 		logger.Errorf("Unable to dup tun fd: %v", err)
-		return nil
+		return nil, errDup
 	}
 
 	err = unix.SetNonblock(dupTunFd, true)
 	if err != nil {
 		logger.Errorf("Unable to set tun fd as non blocking: %v", err)
 		unix.Close(dupTunFd)
-		return nil
+		return nil, errSetNonblock
 	}
 	tun, err := tun.CreateTUNFromFile(os.NewFile(uintptr(dupTunFd), "/dev/tun"), 0)
 	if err != nil {
 		logger.Errorf("Unable to create new tun device from fd: %v", err)
 		unix.Close(dupTunFd)
-		return nil
+		return nil, errCreateTun
 	}
 
-	return tun
+	return tun, 0
 }
 
-func addTunnelFromDevice(dev *device.Device, settings string, virtualNet *netstack.Net, logger *device.Logger) int32 {
+func bringUpDevice(dev *device.Device, settings string, logger *device.Logger) error {
 	err := dev.IpcSet(settings)
 	if err != nil {
 		logger.Errorf("Unable to set IPC settings: %v", err)
 		dev.Close()
-		return errBadWgConfig
+		return err
 	}
 
 	dev.Up()
 	logger.Verbosef("Device started")
+	return nil
+}
+
+func addTunnelFromDevice(dev *device.Device, entryDev *device.Device, settings string, entrySettings string, virtualNet *netstack.Net, logger *device.Logger) int32 {
+	err := bringUpDevice(dev, settings, logger)
+	if err != nil {
+		return errBadWgConfig
+	}
+
+	if entryDev != nil {
+		err = bringUpDevice(entryDev, entrySettings, logger)
+		if err != nil {
+			dev.Close()
+			return errBadWgConfig
+		}
+	}
 
 	var i int32
 	for i = 0; i < math.MaxInt32; i++ {
@@ -236,7 +210,7 @@ func addTunnelFromDevice(dev *device.Device, settings string, virtualNet *netsta
 		dev.Close()
 		return errDeviceLimitHit
 	}
-	tunnelHandles[i] = tunnelHandle{dev, nil, logger, virtualNet}
+	tunnelHandles[i] = tunnelHandle{dev, entryDev, logger, virtualNet}
 	return i
 }
 
@@ -246,15 +220,15 @@ func wgTurnOn(settings *C.char, tunFd int32) int32 {
 		Verbosef: CLogger(0).Printf,
 		Errorf:   CLogger(1).Printf,
 	}
-	tun := openTUNFromSocket(tunFd, logger)
+	tun, errCode := openTUNFromSocket(tunFd, logger)
 	if tun == nil {
-		return -1
+		return errCode
 	}
 
 	logger.Verbosef("Attaching to interface")
 	dev := device.NewDevice(tun, conn.NewStdNetBind(), logger)
 
-	return addTunnelFromDevice(dev, C.GoString(settings), nil, logger)
+	return addTunnelFromDevice(dev, nil, C.GoString(settings), "", nil, logger)
 }
 
 func wgTurnOnIANFromExistingTunnel(tun tun.Device, settings string, privateAddr netip.Addr) int32 {
@@ -281,7 +255,7 @@ func wgTurnOnIANFromExistingTunnel(tun tun.Device, settings string, privateAddr 
 	logger.Verbosef("Attaching to interface")
 	dev := device.NewDevice(&wrapper, conn.NewStdNetBind(), logger)
 
-	return addTunnelFromDevice(dev, settings, virtualNet, logger)
+	return addTunnelFromDevice(dev, nil, settings, "", virtualNet, logger)
 }
 
 //export wgTurnOnIAN
@@ -298,9 +272,9 @@ func wgTurnOnIAN(settings *C.char, tunFd int32, privateIP *C.char) int32 {
 		return -1
 	}
 
-	tun := openTUNFromSocket(tunFd, logger)
+	tun, errCode := openTUNFromSocket(tunFd, logger)
 	if tun == nil {
-		return -1
+		return errCode
 	}
 
 	return wgTurnOnIANFromExistingTunnel(tun, C.GoString(settings), privateAddr)
