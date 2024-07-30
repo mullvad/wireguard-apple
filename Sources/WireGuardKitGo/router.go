@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"io"
 	"net/netip"
 	"os"
@@ -317,15 +316,15 @@ func (r *routerRead) readWorker(device tun.Device, isVirtual bool) {
 			r.batchPool.Put(batch)
 			select {
 			case r.errorChannel <- err:
-			case <- r.rxShutdown:
+			case <-r.rxShutdown:
 			}
 			return
 		}
 		batch.isVirtual = isVirtual
 		select {
-		case <- r.rxShutdown:
+		case <-r.rxShutdown:
 			return
-		case 	r.rxChannel <- batch:
+		case r.rxChannel <- batch:
 		}
 	}
 }
@@ -349,6 +348,8 @@ func newRouterRead(real, virtual tun.Device, virtualRouteChan chan PacketIdentif
 				return batch
 			},
 		},
+		errorChannel,
+		nil,
 	}
 	go result.readWorker(real, false)
 	go result.readWorker(virtual, true)

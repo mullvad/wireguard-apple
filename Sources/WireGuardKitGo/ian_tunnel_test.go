@@ -366,7 +366,7 @@ func TestICMPSanityCheckFromFirstPrinciples(t *testing.T) {
 	assert.Equal(t, written, len(pingBytes))
 
 	readBuff := make([]byte, 1024)
-	readBytes, err := receiver.Read(readBuff)
+	_, err = receiver.Read(readBuff)
 	assert.Nil(t, err)
 
 }
