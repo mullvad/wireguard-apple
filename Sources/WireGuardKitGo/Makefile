@@ -49,7 +49,6 @@ $(BUILDDIR)/libwg-go-$(1).a: $(GOROOT)/.prepared go.mod
 	 CARGO_TARGET_DIR=$(BUILDDIR)/target DESTINATION=$(BUILDDIR) PATH="${HOME}/.cargo/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Library/Apple/usr/bin:" CARGO=$(HOME)/.cargo/bin/cargo TARGET=aarch64-apple-ios make -C wireguard-go/maybenot/crates/maybenot-ffi
 	go build --tags daita -ldflags=-w -trimpath -ldflags=L=$(BUILDDIR)/ -v -o "$(BUILDDIR)/libwg-go-$(1).a" -buildmode c-archive
 	rm -f "$(BUILDDIR)/libwg-go-$(1).h"
-	rm -f "$(BUILDDIR)/libmaybenot.a"
 endef
 $(foreach ARCH,$(ARCHS),$(eval $(call libwg-go-a,$(ARCH))))
 
