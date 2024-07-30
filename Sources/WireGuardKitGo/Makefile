@@ -20,6 +20,11 @@ GOARCH_arm64 := arm64
 GOARCH_x86_64 := amd64
 GOOS_macosx := darwin
 GOOS_iphoneos := ios
+RUST_TARGET_iphoneos := "ios"
+RUST_TARGET_ipados := "ios"
+RUST_TARGET_iphoneos_simulator := "ios-sim"
+RUST_arm64 := aarch64
+RUST_x86_64 := aarch64
 
 UNAME := $(shell uname -m)
 ifeq ($(UNAME), $(GOARCH_arm64))
@@ -50,10 +55,9 @@ $(BUILDDIR)/libwg-go-$(1).a: $(GOROOT)/.prepared go.mod
 			  DESTINATION=$(BUILT_PRODUCTS_DIR) \
 			  PATH="$(HOME)/.cargo/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Library/Apple/usr/bin:" \
 			  CARGO=$(HOME)/.cargo/bin/cargo \
-			  TARGET=aarch64-apple-ios \
+			  TARGET=$(RUST_$(1))-apple-$(RUST_TARGET_$(PLATFORM_NAME)) \
 			  make -C wireguard-go/maybenot/crates/maybenot-ffi
 	go build --tags daita -ldflags=-w -trimpath -ldflags=L=$(BUILDDIR)/ -v -o "$(BUILDDIR)/libwg-go-$(1).a" -buildmode c-archive
-	env && exit 1
 	rm -f "$(BUILDDIR)/libwg-go-$(1).h"
 endef
 $(foreach ARCH,$(ARCHS),$(eval $(call libwg-go-a,$(ARCH))))
