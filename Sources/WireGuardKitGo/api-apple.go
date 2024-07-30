@@ -103,52 +103,6 @@ func wgSetLogger(context, loggerFn uintptr) {
 	loggerFunc = unsafe.Pointer(loggerFn)
 }
 
-func wgTurnOnMultihopInner(tun tun.Device, exitSettings *C.char, entrySettings *C.char, privateIp *C.char, exitMtu int, logger *device.Logger) int32 {
-	ip, err := netip.ParseAddr(C.GoString(privateIp))
-	if err != nil {
-		logger.Errorf("Failed to parse private IP: %v", err)
-		tun.Close()
-		return errBadIPString
-	}
-
-	exitConfigString := C.GoString(exitSettings)
-	entryConfigString := C.GoString(entrySettings)
-	exitEndpoint := parseEndpointFromGoConfig(exitConfigString)
-	if exitEndpoint == nil {
-		tun.Close()
-		return errNoEndpointInConfig
-	}
-
-	singletun := multihoptun.NewMultihopTun(ip, exitEndpoint.Addr(), exitEndpoint.Port(), exitMtu+80)
-
-	exitDev := device.NewDevice(tun, singletun.Binder(), logger)
-	entryDev := device.NewDevice(&singletun, conn.NewStdNetBind(), logger)
-
-	return addTunnelFromDevice(exitDev, entryDev, exitConfigString, entryConfigString, nil, logger)
-}
-
-//export wgTurnOnMultihop
-func wgTurnOnMultihop(exitSettings *C.char, entrySettings *C.char, privateIp *C.char, tunFd int32) int32 {
-	logger := &device.Logger{
-		Verbosef: CLogger(0).Printf,
-		Errorf:   CLogger(1).Printf,
-	}
-
-	tun, errCode := openTUNFromSocket(tunFd, logger)
-	if tun == nil {
-		return errCode
-	}
-
-	exitMtu, err := tun.MTU()
-	if err != nil {
-		tun.Close()
-		return errGetMtu
-	}
-
-	return wgTurnOnMultihopInner(tun, exitSettings, entrySettings, privateIp, exitMtu, logger)
-
-}
-
 func openTUNFromSocket(tunFd int32, logger *device.Logger) (tun.Device, int32) {
 
 	dupTunFd, err := unix.Dup(int(tunFd))
@@ -229,6 +183,52 @@ func wgTurnOn(settings *C.char, tunFd int32) int32 {
 	dev := device.NewDevice(tun, conn.NewStdNetBind(), logger)
 
 	return addTunnelFromDevice(dev, nil, C.GoString(settings), "", nil, logger)
+}
+
+func wgTurnOnMultihopInner(tun tun.Device, exitSettings *C.char, entrySettings *C.char, privateIp *C.char, exitMtu int, logger *device.Logger) int32 {
+	ip, err := netip.ParseAddr(C.GoString(privateIp))
+	if err != nil {
+		logger.Errorf("Failed to parse private IP: %v", err)
+		tun.Close()
+		return errBadIPString
+	}
+
+	exitConfigString := C.GoString(exitSettings)
+	entryConfigString := C.GoString(entrySettings)
+	exitEndpoint := parseEndpointFromGoConfig(exitConfigString)
+	if exitEndpoint == nil {
+		tun.Close()
+		return errNoEndpointInConfig
+	}
+
+	singletun := multihoptun.NewMultihopTun(ip, exitEndpoint.Addr(), exitEndpoint.Port(), exitMtu+80)
+
+	exitDev := device.NewDevice(tun, singletun.Binder(), logger)
+	entryDev := device.NewDevice(&singletun, conn.NewStdNetBind(), logger)
+
+	return addTunnelFromDevice(exitDev, entryDev, exitConfigString, entryConfigString, nil, logger)
+}
+
+//export wgTurnOnMultihop
+func wgTurnOnMultihop(exitSettings *C.char, entrySettings *C.char, privateIp *C.char, tunFd int32) int32 {
+	logger := &device.Logger{
+		Verbosef: CLogger(0).Printf,
+		Errorf:   CLogger(1).Printf,
+	}
+
+	tun, errCode := openTUNFromSocket(tunFd, logger)
+	if tun == nil {
+		return errCode
+	}
+
+	exitMtu, err := tun.MTU()
+	if err != nil {
+		tun.Close()
+		return errGetMtu
+	}
+
+	return wgTurnOnMultihopInner(tun, exitSettings, entrySettings, privateIp, exitMtu, logger)
+
 }
 
 func wgTurnOnIANFromExistingTunnel(tun tun.Device, settings string, privateAddr netip.Addr) int32 {
