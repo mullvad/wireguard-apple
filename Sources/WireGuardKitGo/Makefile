@@ -46,7 +46,7 @@ $(BUILDDIR)/libwg-go-$(1).a: export GOOS := $(GOOS_$(PLATFORM_NAME))
 $(BUILDDIR)/libwg-go-$(1).a: export GOARCH := $(GOARCH_$(1))
 $(BUILDDIR)/libwg-go-$(1).a: $(GOROOT)/.prepared go.mod
 	git submodule update --init --recursive
-	 CARGO_TARGET_DIR=$(BUILDDIR)/target DESTINATION=$(BUILDDIR) PATH="$(HOME)/.cargo/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Library/Apple/usr/bin:" CARGO=$(HOME)/.cargo/bin/cargo TARGET=aarch64-apple-ios make -C wireguard-go/maybenot/crates/maybenot-ffi
+	 CARGO_TARGET_DIR=$(BUILDDIR)/target DESTINATION=$(BUILT_PRODUCTS_DIR) PATH="$(HOME)/.cargo/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Library/Apple/usr/bin:" CARGO=$(HOME)/.cargo/bin/cargo TARGET=aarch64-apple-ios make -C wireguard-go/maybenot/crates/maybenot-ffi
 	go build --tags daita -ldflags=-w -trimpath -ldflags=L=$(BUILDDIR)/ -v -o "$(BUILDDIR)/libwg-go-$(1).a" -buildmode c-archive
 	rm -f "$(BUILDDIR)/libwg-go-$(1).h"
 endef
