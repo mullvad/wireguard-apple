@@ -22,7 +22,7 @@ GOOS_macosx := darwin
 GOOS_iphoneos := ios
 RUST_TARGET_iphoneos := "ios"
 RUST_TARGET_ipados := "ios"
-RUST_TARGET_iphoneos_simulator := "ios-sim"
+RUST_TARGET_iphonesimulator := "ios-sim"
 RUST_arm64 := aarch64
 RUST_x86_64 := aarch64
 
