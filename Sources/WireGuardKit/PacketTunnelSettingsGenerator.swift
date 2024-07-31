@@ -145,10 +145,12 @@ struct DeviceConfiguration {
 class PacketTunnelSettingsGenerator {
     let exit: DeviceConfiguration
     let entry: DeviceConfiguration?
+    let daita: DaitaConfiguration?
 
-    init(exit: DeviceConfiguration, entry: DeviceConfiguration? = nil) {
+    init(exit: DeviceConfiguration, entry: DeviceConfiguration? = nil, daita: DaitaConfiguration? = nil) {
         self.exit = exit
         self.entry = entry
+        self.daita = daita
     }
 
     func entryUapiConfiguration() -> (String, [EndpointResolutionResult?])? {
@@ -200,11 +202,11 @@ class PacketTunnelSettingsGenerator {
     func generateNetworkSettings() -> NEPacketTunnelNetworkSettings {
         exit.generateNetworkSettings()
     }
-    
+
     func endpointUapiConfiguration() -> (String, [EndpointResolutionResult?]) {
         exit.endpointUapiConfiguration()
     }
-    
+
     func entryEndpointUapiConfiguration() -> (String, [EndpointResolutionResult?])? {
         entry?.endpointUapiConfiguration()
     }
@@ -218,6 +220,3 @@ class PacketTunnelSettingsGenerator {
     }
 }
 
-struct DAITAConfig {
-    let machines: Data
-}

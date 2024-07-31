@@ -204,7 +204,7 @@ public class WireGuardAdapter {
             self.addDefaultPathObserver()
 
             do {
-                let settingsGenerator = try self.makeSettingsGenerator(with: exitConfiguration, entryConfiguration: entryConfiguration)
+                let settingsGenerator = try self.makeSettingsGenerator(with: exitConfiguration, entryConfiguration: entryConfiguration, daita: daita)
                 try self.setNetworkSettings(settingsGenerator.generateNetworkSettings())
 
                 let (exitWgConfig, resolutionResults) = settingsGenerator.uapiConfiguration()
@@ -431,12 +431,18 @@ public class WireGuardAdapter {
         }
 
         let privateAddr = "\(privateAddress)"
-        let daitaMachines = daita?.machines
+        var daitaMachines: Data? = nil
+        if var machines = daita?.machines {
+            machines.append(0)
+            daitaMachines = machines
+        }
+        
+
 
         let handle = if let entryWgConfig {
-            wgTurnOnMultihop(exitWgConfig, entryWgConfig, privateAddr, tunnelFileDescriptor, daita?.machines ?? nil, daita?.maxEvents ?? 0, daita?.maxActions ?? 0)
+            wgTurnOnMultihop(exitWgConfig, entryWgConfig, privateAddr, tunnelFileDescriptor, daitaMachines?.map { $0 } ?? nil, daita?.maxEvents ?? 0, daita?.maxActions ?? 0)
         } else {
-            wgTurnOn(exitWgConfig, tunnelFileDescriptor, daita?.machines ?? nil, daita?.maxEvents ?? 0, daita?.maxActions ?? 0)
+            wgTurnOn(exitWgConfig, tunnelFileDescriptor, daitaMachines?.map { $0 } ?? nil, daita?.maxEvents ?? 0, daita?.maxActions ?? 0)
         }
         if handle < 0 {
             throw WireGuardAdapterError.startWireGuardBackend(handle)
@@ -452,7 +458,7 @@ public class WireGuardAdapter {
     /// - Parameter entryConfiguration: an optional instance of type `TunnelConfiguration` for the entry WireGuard device
     /// - Throws: an error of type `WireGuardAdapterError`.
     /// - Returns: an instance of type `PacketTunnelSettingsGenerator`.
-    private func makeSettingsGenerator(with exitConfiguration: TunnelConfiguration, entryConfiguration: TunnelConfiguration? = nil) throws -> PacketTunnelSettingsGenerator {
+    private func makeSettingsGenerator(with exitConfiguration: TunnelConfiguration, entryConfiguration: TunnelConfiguration? = nil, daita: DaitaConfiguration? = nil) throws -> PacketTunnelSettingsGenerator {
         let resolvedExitEndpoints = try self.resolvePeers(for: exitConfiguration)
         
         var entry: DeviceConfiguration? = nil
@@ -558,7 +564,7 @@ public class WireGuardAdapter {
                 self.logEndpointResolutionResults(resolutionResults)
 
                 self.state = .started(
-                    try self.startWireGuardBackend(exitWgConfig: exitWgConfig, privateAddress: privateAddress),
+                    try self.startWireGuardBackend(exitWgConfig: exitWgConfig, privateAddress: privateAddress, daita: settingsGenerator.daita),
                     settingsGenerator
                 )
             } catch {
