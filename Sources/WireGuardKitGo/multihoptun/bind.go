@@ -3,8 +3,6 @@ package multihoptun
 import (
 	"math/rand"
 	"net"
-	"sync"
-	"sync/atomic"
 
 	"golang.zx2c4.com/wireguard/conn"
 
@@ -13,23 +11,17 @@ import (
 
 type multihopBind struct {
 	*MultihopTun
-	receiverWorkGroup *sync.WaitGroup
-	shutdown          atomic.Bool
-	socketShutdown    chan struct{}
+	socketShutdown chan struct{}
 }
 
 // Close implements tun.Device
 func (st *multihopBind) Close() error {
-	st.shutdown.Store(true)
 	select {
-	case _, ok := <-st.socketShutdown:
-		if !ok {
-			break
-		}
+	case <-st.socketShutdown:
+		return nil
 	default:
 		close(st.socketShutdown)
 	}
-	st.receiverWorkGroup.Wait()
 	return nil
 }
 
@@ -45,12 +37,6 @@ func (st *multihopBind) Open(port uint16) (fns []conn.ReceiveFunc, actualPort ui
 	actualPort = st.localPort
 	fns = []conn.ReceiveFunc{
 		func(packets [][]byte, sizes []int, eps []conn.Endpoint) (n int, err error) {
-			if st.shutdown.Load() {
-				return 0, net.ErrClosed
-			}
-			st.receiverWorkGroup.Add(1)
-			defer st.receiverWorkGroup.Done()
-
 			var batch packetBatch
 			var ok bool
 
@@ -94,13 +80,14 @@ func (st *multihopBind) Open(port uint16) (fns []conn.ReceiveFunc, actualPort ui
 				n += 1
 			}
 			batch.packetsCopied = n
-			batch.completion <- batch
+			select {
+			case batch.completion <- batch:
+			case <-st.shutdownChan:
+			}
+
 			return
 		},
 	}
-	// since a bind instance can be closed and reopened all the time, whenver it
-	// is opened, the state should be updated again.
-	st.shutdown.Store(false)
 
 	return fns, actualPort, nil
 }
@@ -112,9 +99,6 @@ func (*multihopBind) ParseEndpoint(s string) (conn.Endpoint, error) {
 
 // Send implements conn.Bind.
 func (st *multihopBind) Send(bufs [][]byte, ep conn.Endpoint) error {
-	st.receiverWorkGroup.Add(1)
-	defer st.receiverWorkGroup.Done()
-
 	var packetBatch packetBatch
 	var ok bool
 
@@ -134,10 +118,12 @@ func (st *multihopBind) Send(bufs [][]byte, ep conn.Endpoint) error {
 		return net.ErrClosed
 	}
 
+	var err error
+	var size int
 	packetBatch.packetsCopied = 0
 	for idx := range bufs {
 		targetPacket := packetBatch.packets[idx][packetBatch.offset:]
-		size, err := st.writePayload(targetPacket[:], bufs[idx])
+		size, err = st.writePayload(targetPacket[:], bufs[idx])
 		if err != nil {
 			continue
 		}
@@ -145,8 +131,13 @@ func (st *multihopBind) Send(bufs [][]byte, ep conn.Endpoint) error {
 		packetBatch.packetsCopied += 1
 	}
 
-	packetBatch.completion <- packetBatch
-	return nil
+	select {
+	case packetBatch.completion <- packetBatch:
+	case <-st.shutdownChan:
+		break
+	}
+
+	return err
 }
 
 // SetMark implements conn.Bind.

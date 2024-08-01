@@ -8,7 +8,6 @@ import (
 	"math/rand"
 	"net/netip"
 	"os"
-	"sync"
 	"sync/atomic"
 
 	"golang.zx2c4.com/wireguard/conn"
@@ -89,12 +88,9 @@ func NewMultihopTun(local, remote netip.Addr, remotePort uint16, mtu int) Multih
 }
 
 func (st *MultihopTun) Binder() conn.Bind {
-	waitGroup := &sync.WaitGroup{}
 	socketShutdown := make(chan struct{})
 	return &multihopBind{
 		st,
-		waitGroup,
-		atomic.Bool{},
 		socketShutdown,
 	}
 
