@@ -41,8 +41,8 @@ func (st *multihopBind) Open(port uint16) (fns []conn.ReceiveFunc, actualPort ui
 			var ok bool
 
 			select {
-			case _, _ = <-st.shutdownChan:
-			case _, _ = <-st.socketShutdown:
+			case <-st.shutdownChan:
+			case <-st.socketShutdown:
 				return 0, net.ErrClosed
 			case batch, ok = <-st.writeRecv:
 				break
@@ -103,8 +103,8 @@ func (st *multihopBind) Send(bufs [][]byte, ep conn.Endpoint) error {
 	var ok bool
 
 	select {
-	case _, _ = <-st.shutdownChan:
-	case _, _ = <-st.socketShutdown:
+	case <-st.shutdownChan:
+	case <-st.socketShutdown:
 		// it is important to return a net.ErrClosed, since it implements the
 		// net.Error interface and indicates that it is not a recoverable error.
 		// wg-go uses the net.Error interface to deduce if it should try to send
