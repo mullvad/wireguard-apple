@@ -129,7 +129,7 @@ func (st *MultihopTun) Write(bufs [][]byte, offset int) (int, error) {
 	select {
 	case st.writeRecv <- packetBatch:
 		break
-	case _, _ = <-st.shutdownChan:
+	case <-st.shutdownChan:
 		return 0, io.EOF
 	}
 
@@ -137,7 +137,7 @@ func (st *MultihopTun) Write(bufs [][]byte, offset int) (int, error) {
 	select {
 	case packetBatch, ok = <-completion:
 		break
-	case _, _ = <-st.shutdownChan:
+	case <-st.shutdownChan:
 		return 0, io.EOF
 	}
 
@@ -161,7 +161,7 @@ func (st *MultihopTun) Read(bufs [][]byte, sizes []int, offset int) (n int, err 
 	select {
 	case st.readRecv <- packetBatch:
 		break
-	case _, _ = <-st.shutdownChan:
+	case <-st.shutdownChan:
 		return 0, io.EOF
 	}
 
@@ -169,7 +169,7 @@ func (st *MultihopTun) Read(bufs [][]byte, sizes []int, offset int) (n int, err 
 	select {
 	case packetBatch, ok = <-completion:
 		break
-	case _, _ = <-st.shutdownChan:
+	case <-st.shutdownChan:
 		return 0, io.EOF
 	}
 
