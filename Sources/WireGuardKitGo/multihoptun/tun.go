@@ -133,13 +133,7 @@ func (st *MultihopTun) Write(bufs [][]byte, offset int) (int, error) {
 		return 0, io.EOF
 	}
 
-	var ok bool
-	select {
-	case packetBatch, ok = <-completion:
-		break
-	case <-st.shutdownChan:
-		return 0, io.EOF
-	}
+	packetBatch, ok := <-completion
 
 	if !ok {
 		return 0, io.EOF
@@ -166,12 +160,7 @@ func (st *MultihopTun) Read(bufs [][]byte, sizes []int, offset int) (n int, err 
 	}
 
 	var ok bool
-	select {
-	case packetBatch, ok = <-completion:
-		break
-	case <-st.shutdownChan:
-		return 0, io.EOF
-	}
+	packetBatch, ok = <-completion
 
 	if !ok {
 		return 0, io.EOF
