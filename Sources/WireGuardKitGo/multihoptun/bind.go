@@ -83,11 +83,7 @@ func (st *multihopBind) Open(port uint16) (fns []conn.ReceiveFunc, actualPort ui
 				n += 1
 			}
 			batch.packetsCopied = n
-			select {
-			case batch.completion <- batch:
-			case <-st.shutdownChan:
-				return 0, net.ErrClosed
-			}
+			batch.completion <- batch
 
 			return
 		},
@@ -136,11 +132,7 @@ func (st *multihopBind) Send(bufs [][]byte, ep conn.Endpoint) error {
 		packetBatch.packetsCopied += 1
 	}
 
-	select {
-	case packetBatch.completion <- packetBatch:
-	case <-st.shutdownChan:
-		break
-	}
+	packetBatch.completion <- packetBatch
 
 	return err
 }
