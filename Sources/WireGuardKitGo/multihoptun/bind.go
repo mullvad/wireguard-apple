@@ -3,8 +3,6 @@ package multihoptun
 import (
 	"math/rand"
 	"net"
-	"sync"
-	"sync/atomic"
 
 	"golang.zx2c4.com/wireguard/conn"
 
@@ -13,23 +11,17 @@ import (
 
 type multihopBind struct {
 	*MultihopTun
-	receiverWorkGroup *sync.WaitGroup
-	shutdown          atomic.Bool
-	socketShutdown    chan struct{}
+	socketShutdown chan struct{}
 }
 
 // Close implements tun.Device
 func (st *multihopBind) Close() error {
-	st.shutdown.Store(true)
 	select {
-	case _, ok := <-st.socketShutdown:
-		if !ok {
-			break
-		}
+	case <-st.socketShutdown:
+		return nil
 	default:
 		close(st.socketShutdown)
 	}
-	st.receiverWorkGroup.Wait()
 	return nil
 }
 
@@ -40,23 +32,20 @@ func (st *multihopBind) Open(port uint16) (fns []conn.ReceiveFunc, actualPort ui
 	} else {
 		st.localPort = uint16(rand.Uint32()>>16) | 1
 	}
+	// WireGuard will close existing sockets before bringing up a new device on Bind updates.
+	// This guarantees that the socket shutdown channel is always available.
 	st.socketShutdown = make(chan struct{})
 
 	actualPort = st.localPort
 	fns = []conn.ReceiveFunc{
 		func(packets [][]byte, sizes []int, eps []conn.Endpoint) (n int, err error) {
-			if st.shutdown.Load() {
-				return 0, net.ErrClosed
-			}
-			st.receiverWorkGroup.Add(1)
-			defer st.receiverWorkGroup.Done()
-
 			var batch packetBatch
 			var ok bool
 
 			select {
-			case _, _ = <-st.shutdownChan:
-			case _, _ = <-st.socketShutdown:
+			case <-st.shutdownChan:
+				return 0, net.ErrClosed
+			case <-st.socketShutdown:
 				return 0, net.ErrClosed
 			case batch, ok = <-st.writeRecv:
 				break
@@ -95,12 +84,10 @@ func (st *multihopBind) Open(port uint16) (fns []conn.ReceiveFunc, actualPort ui
 			}
 			batch.packetsCopied = n
 			batch.completion <- batch
+
 			return
 		},
 	}
-	// since a bind instance can be closed and reopened all the time, whenver it
-	// is opened, the state should be updated again.
-	st.shutdown.Store(false)
 
 	return fns, actualPort, nil
 }
@@ -112,15 +99,13 @@ func (*multihopBind) ParseEndpoint(s string) (conn.Endpoint, error) {
 
 // Send implements conn.Bind.
 func (st *multihopBind) Send(bufs [][]byte, ep conn.Endpoint) error {
-	st.receiverWorkGroup.Add(1)
-	defer st.receiverWorkGroup.Done()
-
 	var packetBatch packetBatch
 	var ok bool
 
 	select {
-	case _, _ = <-st.shutdownChan:
-	case _, _ = <-st.socketShutdown:
+	case <-st.shutdownChan:
+		return net.ErrClosed
+	case <-st.socketShutdown:
 		// it is important to return a net.ErrClosed, since it implements the
 		// net.Error interface and indicates that it is not a recoverable error.
 		// wg-go uses the net.Error interface to deduce if it should try to send
@@ -134,10 +119,12 @@ func (st *multihopBind) Send(bufs [][]byte, ep conn.Endpoint) error {
 		return net.ErrClosed
 	}
 
+	var err error
+	var size int
 	packetBatch.packetsCopied = 0
 	for idx := range bufs {
 		targetPacket := packetBatch.packets[idx][packetBatch.offset:]
-		size, err := st.writePayload(targetPacket[:], bufs[idx])
+		size, err = st.writePayload(targetPacket[:], bufs[idx])
 		if err != nil {
 			continue
 		}
@@ -146,7 +133,8 @@ func (st *multihopBind) Send(bufs [][]byte, ep conn.Endpoint) error {
 	}
 
 	packetBatch.completion <- packetBatch
-	return nil
+
+	return err
 }
 
 // SetMark implements conn.Bind.

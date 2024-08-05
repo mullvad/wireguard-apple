@@ -8,7 +8,6 @@ import (
 	"math/rand"
 	"net/netip"
 	"os"
-	"sync"
 	"sync/atomic"
 
 	"golang.zx2c4.com/wireguard/conn"
@@ -89,12 +88,9 @@ func NewMultihopTun(local, remote netip.Addr, remotePort uint16, mtu int) Multih
 }
 
 func (st *MultihopTun) Binder() conn.Bind {
-	waitGroup := &sync.WaitGroup{}
 	socketShutdown := make(chan struct{})
 	return &multihopBind{
 		st,
-		waitGroup,
-		atomic.Bool{},
 		socketShutdown,
 	}
 
@@ -133,17 +129,11 @@ func (st *MultihopTun) Write(bufs [][]byte, offset int) (int, error) {
 	select {
 	case st.writeRecv <- packetBatch:
 		break
-	case _, _ = <-st.shutdownChan:
+	case <-st.shutdownChan:
 		return 0, io.EOF
 	}
 
-	var ok bool
-	select {
-	case packetBatch, ok = <-completion:
-		break
-	case _, _ = <-st.shutdownChan:
-		return 0, io.EOF
-	}
+	packetBatch, ok := <-completion
 
 	if !ok {
 		return 0, io.EOF
@@ -165,17 +155,12 @@ func (st *MultihopTun) Read(bufs [][]byte, sizes []int, offset int) (n int, err 
 	select {
 	case st.readRecv <- packetBatch:
 		break
-	case _, _ = <-st.shutdownChan:
+	case <-st.shutdownChan:
 		return 0, io.EOF
 	}
 
 	var ok bool
-	select {
-	case packetBatch, ok = <-completion:
-		break
-	case _, _ = <-st.shutdownChan:
-		return 0, io.EOF
-	}
+	packetBatch, ok = <-completion
 
 	if !ok {
 		return 0, io.EOF
