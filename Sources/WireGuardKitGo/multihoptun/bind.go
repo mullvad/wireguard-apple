@@ -32,6 +32,8 @@ func (st *multihopBind) Open(port uint16) (fns []conn.ReceiveFunc, actualPort ui
 	} else {
 		st.localPort = uint16(rand.Uint32()>>16) | 1
 	}
+	// WireGuard will close existing sockets before bringing up a new device on Bind updates.
+	// This guarantees that the socket shutdown channel is always available.
 	st.socketShutdown = make(chan struct{})
 
 	actualPort = st.localPort
