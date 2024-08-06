@@ -9,6 +9,7 @@ import (
 	"os"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"golang.org/x/net/icmp"
@@ -309,26 +310,37 @@ func TestICMPRemotePing(t *testing.T) {
 
 	sender, err := net.Dial("ping4", "10.64.0.1")
 	assert.Nil(t, err)
-	receiver, err := net.ListenPing(netstack.PingAddrFromAddr(privateIp))
+	// receiver, err := net.ListenPing(netstack.PingAddrFromAddr(privateIp))
 
 	ping := icmp.Message{
 		Type: ipv4.ICMPTypeEcho,
+		Code: 0,
 		Body: &icmp.Echo{
 			ID:   1234,
 			Seq:  1,
-			Data: make([]byte, 4),
+			Data: []byte("testing123"),
 		},
 	}
 	pingBytes, err := ping.Marshal(nil)
+
+	sender.SetReadDeadline(time.Now().Add(time.Second * 10))
 
 	written, err := sender.Write(pingBytes)
 	assert.Nil(t, err)
 	assert.Equal(t, written, len(pingBytes))
 
 	readBuff := make([]byte, 1024)
-	readBytes, err := receiver.Read(readBuff)
+	readBytes, err := sender.Read(readBuff)
 	assert.Nil(t, err)
 	assert.Greater(t, readBytes, 0)
+	replyPacket, err := icmp.ParseMessage(1, readBuff[:readBytes])
+	assert.Nil(t, err)
+	replyPing, ok := replyPacket.Body.(*icmp.Echo)
+	assert.True(t, ok)
+	// packet IDs will generally differ
+	// assert.Equal(t, replyPing.ID, 1234)
+	assert.Equal(t, replyPing.Seq, 1)
+	assert.Equal(t, replyPing.Data, []byte("testing123"))
 }
 
 func TestICMPSanityCheckFromFirstPrinciples(t *testing.T) {
@@ -347,9 +359,10 @@ func TestICMPSanityCheckFromFirstPrinciples(t *testing.T) {
 	aDev.Up()
 	bDev.Up()
 
-	sender, err := aNet.Dial("ping4", "192.168.0.5")
-	assert.Nil(t, err)
 	receiver, err := bNet.ListenPing(netstack.PingAddrFromAddr(bIp))
+	//sender, err := aNet.Dial("ping4", "192.168.0.5")
+	sender, err := aNet.Dial("ping4", "1.2.3.5")
+	assert.Nil(t, err)
 
 	ping := icmp.Message{
 		Type: ipv4.ICMPTypeEcho,
