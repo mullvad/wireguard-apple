@@ -9,6 +9,8 @@ SDKROOT ?= $(shell xcrun --sdk $(PLATFORM_NAME) --show-sdk-path)
 CONFIGURATION_BUILD_DIR ?= $(CURDIR)/out
 CONFIGURATION_TEMP_DIR ?= $(CURDIR)/.tmp
 
+BUILT_PRODUCTS_DIR ?= $(CURDIR)
+
 export PATH := $(PATH):/usr/local/bin:/opt/homebrew/bin
 export CC ?= clang
 LIPO ?= lipo
@@ -23,6 +25,7 @@ GOOS_iphoneos := ios
 RUST_TARGET_iphoneos := "ios"
 RUST_TARGET_ipados := "ios"
 RUST_TARGET_iphonesimulator := "ios-sim"
+RUST_TARGET_macosx := "darwin"
 RUST_arm64 := aarch64
 RUST_x86_64 := x86_64
 
@@ -71,7 +74,17 @@ $(DESTDIR)/libwg-go.a: $(foreach ARCH,$(ARCHS),$(BUILDDIR)/libwg-go-$(ARCH).a)
 
 clean:
 	rm -rf "$(BUILDDIR)" "$(DESTDIR)/libwg-go.a" "$(DESTDIR)/wireguard-go-version.h"
+	rm -f libmaybenot.a
+	rm -rf $(CONFIGURATION_BUILD_DIR)
+	make -C wireguard-go clean
+
+libmaybenot.a: $(wildcard maybenot/*)
+	make --directory wireguard-go/maybenot/crates/maybenot-ffi/
+
+test: libmaybenot.a build
+	make -C wireguard-go daita
+	DESTINATION=$(CURDIR) go test -tags daita ./... -count=1
 
 install: build
 
-.PHONY: clean build version-header install
+.PHONY: clean build version-header install test
