@@ -20,7 +20,7 @@ import (
 const defaultOffset = 4
 
 // how many buffers we should preallocate.
-// Currently, WireGuardGo sends buffers one at a time, so this is 1, though the API says that
+// Currently, WireGuardGo sends buffers one at a time, so this is 128, though the API says that
 // this is not set in stone.
 const expectedBufferCount = 128
 
@@ -201,7 +201,10 @@ func (r *Router) Read(bufs []byte, offset int) (n int, err error) {
 		return 0, io.EOF
 	case batch, ok = <-r.read.rxChannel:
 		defer func() {
-			batch.completion <- batch
+			// Avoid reading nil values if a read happens after rxChannel is closed
+			if batch != nil {
+				batch.completion <- batch
+			}
 		}()
 		if !ok {
 			return 0, errors.New("reader shut down")
@@ -288,14 +291,12 @@ func (r *routerRead) readWorker(device tun.Device, isVirtual bool) {
 		case _, _ = <-r.rxShutdown:
 			return
 		case r.rxChannel <- batch:
-			break
 		}
 		select {
 		case _, _ = <-r.rxShutdown:
 			return
 		case batch = <-completion:
 			batch.packet = buffer
-			break
 		}
 	}
 }
