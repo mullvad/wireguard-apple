@@ -19,11 +19,6 @@ import (
 // See: https://github.com/WireGuard/wireguard-go/blob/12269c2761734b15625017d8565745096325392f/tun/tun_darwin.go#L228
 const defaultOffset = 4
 
-// how many buffers we should preallocate.
-// Currently, WireGuardGo sends buffers one at a time, so this is 1, though the API says that
-// this is not set in stone.
-const expectedBufferCount = 128
-
 // A packet batch contains within itself a buffer used to store packet data and
 // whether it is a virtual packet or not. This allows an individual reader
 // goroutine to send a read packet to whatever `Router.Read` where its contents
@@ -201,7 +196,10 @@ func (r *Router) Read(bufs []byte, offset int) (n int, err error) {
 		return 0, io.EOF
 	case batch, ok = <-r.read.rxChannel:
 		defer func() {
-			batch.completion <- batch
+			// Avoid reading nil values if a read happens after rxChannel is closed
+			if batch != nil {
+				batch.completion <- batch
+			}
 		}()
 		if !ok {
 			return 0, errors.New("reader shut down")
@@ -288,14 +286,12 @@ func (r *routerRead) readWorker(device tun.Device, isVirtual bool) {
 		case _, _ = <-r.rxShutdown:
 			return
 		case r.rxChannel <- batch:
-			break
 		}
 		select {
 		case _, _ = <-r.rxShutdown:
 			return
 		case batch = <-completion:
 			batch.packet = buffer
-			break
 		}
 	}
 }
