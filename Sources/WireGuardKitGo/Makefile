@@ -9,6 +9,8 @@ SDKROOT ?= $(shell xcrun --sdk $(PLATFORM_NAME) --show-sdk-path)
 CONFIGURATION_BUILD_DIR ?= $(CURDIR)/out
 CONFIGURATION_TEMP_DIR ?= $(CURDIR)/.tmp
 
+BUILT_PRODUCTS_DIR ?= $(CURDIR)
+
 export PATH := $(PATH):/usr/local/bin:/opt/homebrew/bin
 export CC ?= clang
 LIPO ?= lipo
@@ -23,6 +25,7 @@ GOOS_iphoneos := ios
 RUST_TARGET_iphoneos := "ios"
 RUST_TARGET_ipados := "ios"
 RUST_TARGET_iphonesimulator := "ios-sim"
+RUST_TARGET_macosx := "darwin"
 RUST_arm64 := aarch64
 RUST_x86_64 := x86_64
 
@@ -51,12 +54,12 @@ $(BUILDDIR)/libwg-go-$(1).a: export GOOS := $(GOOS_$(PLATFORM_NAME))
 $(BUILDDIR)/libwg-go-$(1).a: export GOARCH := $(GOARCH_$(1))
 $(BUILDDIR)/libwg-go-$(1).a: $(GOROOT)/.prepared go.mod
 	git submodule update --init --recursive
-	 CARGO_TARGET_DIR=$(BUILDDIR)/target \
-			  DESTINATION=$(BUILT_PRODUCTS_DIR) \
-			  PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Library/Apple/usr/bin:" \
-			  CARGO=$(HOME)/.cargo/bin/cargo \
-			  TARGET=$(RUST_$(1))-apple-$(RUST_TARGET_$(PLATFORM_NAME)) \
-			  make -C wireguard-go/maybenot/crates/maybenot-ffi
+	CARGO_TARGET_DIR=$(BUILDDIR)/target \
+			DESTINATION=$(BUILT_PRODUCTS_DIR) \
+			PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Library/Apple/usr/bin:" \
+			CARGO=$(HOME)/.cargo/bin/cargo \
+			TARGET=$(RUST_$(1))-apple-$(RUST_TARGET_$(PLATFORM_NAME)) \
+			make -C wireguard-go/maybenot/crates/maybenot-ffi
 	go build --tags daita -ldflags=-w -trimpath -ldflags=L=$(BUILDDIR)/ -v -o "$(BUILDDIR)/libwg-go-$(1).a" -buildmode c-archive
 	rm -f "$(BUILDDIR)/libwg-go-$(1).h"
 endef
@@ -71,7 +74,14 @@ $(DESTDIR)/libwg-go.a: $(foreach ARCH,$(ARCHS),$(BUILDDIR)/libwg-go-$(ARCH).a)
 
 clean:
 	rm -rf "$(BUILDDIR)" "$(DESTDIR)/libwg-go.a" "$(DESTDIR)/wireguard-go-version.h"
+	rm -f libmaybenot.a
+	rm -rf $(CONFIGURATION_BUILD_DIR)
+	make -C wireguard-go clean
+
+test: build
+	make -C wireguard-go daita
+	go test -tags daita ./... -count=1
 
 install: build
 
-.PHONY: clean build version-header install
+.PHONY: clean build version-header install test
