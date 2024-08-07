@@ -83,7 +83,7 @@ libmaybenot.a: $(wildcard maybenot/*)
 
 test: libmaybenot.a build
 	make -C wireguard-go daita
-	DESTINATION=$(CURDIR) go test -tags daita ./... -count=1
+	go test -tags daita ./... -count=1
 
 install: build
 
