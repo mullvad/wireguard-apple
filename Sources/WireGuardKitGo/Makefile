@@ -78,10 +78,7 @@ clean:
 	rm -rf $(CONFIGURATION_BUILD_DIR)
 	make -C wireguard-go clean
 
-libmaybenot.a: $(wildcard maybenot/*)
-	make --directory wireguard-go/maybenot/crates/maybenot-ffi/
-
-test: libmaybenot.a build
+test: build
 	make -C wireguard-go daita
 	go test -tags daita ./... -count=1
 
