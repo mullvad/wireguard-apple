@@ -4,10 +4,8 @@ import (
 	"crypto/rand"
 	"fmt"
 	"io"
-	"log"
 	"net/netip"
 	"os"
-	"syscall"
 	"testing"
 	"time"
 
@@ -359,8 +357,7 @@ func TestICMPSanityCheckFromFirstPrinciples(t *testing.T) {
 	aDev.Up()
 	bDev.Up()
 
-	receiver, err := bNet.ListenPing(netstack.PingAddrFromAddr(bIp))
-	//sender, err := aNet.Dial("ping4", "192.168.0.5")
+	_, err := bNet.ListenPing(netstack.PingAddrFromAddr(bIp))
 	sender, err := aNet.Dial("ping4", "1.2.3.5")
 	assert.Nil(t, err)
 
@@ -379,142 +376,46 @@ func TestICMPSanityCheckFromFirstPrinciples(t *testing.T) {
 	assert.Equal(t, written, len(pingBytes))
 
 	readBuff := make([]byte, 1024)
-	_, err = receiver.Read(readBuff)
+	_, err = sender.Read(readBuff)
 	assert.Nil(t, err)
-
 }
 
-func TestOpenInTunnelICMPPipes(t *testing.T) {
+func TestPing(t *testing.T) {
 	a, _, _ := netstack.CreateNetTUN([]netip.Addr{aIp}, []netip.Addr{}, 1280)
-
-	b, bNet, _ := netstack.CreateNetTUN([]netip.Addr{bIp}, []netip.Addr{}, 1280)
-
-	// _ := device.NewDevice(a, conn.NewStdNetBind(), device.NewLogger(device.LogLevelSilent, ""))
-	bDev := device.NewDevice(b, conn.NewStdNetBind(), device.NewLogger(device.LogLevelVerbose, ""))
-
-	configs, endpointConfigs := genConfigs(t)
-	aConfig := configs[0] + endpointConfigs[0]
-	// bConfig := configs[1] + endpointConfigs[1]
-
-	tunnel := wgTurnOnIANFromExistingTunnel(a, aConfig, aIp)
-
-	// configureDevices(t, aDev, bDev)
-	bDev.Up()
-
-	recvRx, sendTx := openInTunnelICMP(tunnel, "1.2.3.5")
-
-	go func() {
-		// Start accepting ICMP connections on B, and reply as if for pings
-		pingConn, _ := bNet.ListenPing(netstack.PingAddrFromAddr(bIp))
-		pingBuf := make([]byte, 1024)
-		n, _ := pingConn.Read(pingBuf)
-
-		fmt.Printf("- read %d bytes\n", n)
-
-		reply := icmp.Message{
-			Type: ipv4.ICMPTypeEcho,
-			Body: &icmp.Echo{
-				ID:   1234,
-				Seq:  1,
-				Data: make([]byte, 4),
-			},
-		}
-
-		replyBuf, _ := reply.Marshal(nil)
-		pingConn.Write(replyBuf)
-
-	}()
-
-	ping := icmp.Message{
-		Type: ipv4.ICMPTypeEcho,
-		Body: &icmp.Echo{
-			ID:   1234,
-			Seq:  1,
-			Data: make([]byte, 4),
-		},
-	}
-	pingBytes, err := ping.Marshal(nil)
-	if err != nil {
-		log.Fatal("ping.Marshal failed")
-	}
-
-	sendTx.Write(pingBytes)
-
-	readBuf := make([]byte, 1024)
-	// numRead, err := recvFile.Read(readBuf)
-	numRead, err := recvRx.Read(readBuf)
-
-	fmt.Printf("err = %v\n", err)
-
-	assert.Greater(t, numRead, 0)
-
-	fmt.Printf("bytes received: %d\n", numRead)
-}
-
-func TestOpenInTunnelICMP(t *testing.T) {
-
-	a, _, _ := netstack.CreateNetTUN([]netip.Addr{aIp}, []netip.Addr{}, 1280)
-
 	b, _, _ := netstack.CreateNetTUN([]netip.Addr{bIp}, []netip.Addr{}, 1280)
 
-	// _ := device.NewDevice(a, conn.NewStdNetBind(), device.NewLogger(device.LogLevelSilent, ""))
-	bDev := device.NewDevice(b, conn.NewStdNetBind(), device.NewLogger(device.LogLevelSilent, ""))
-
 	configs, endpointConfigs := genConfigs(t)
 	aConfig := configs[0] + endpointConfigs[0]
-	// bConfig := configs[1] + endpointConfigs[1]
+	bConfig := configs[1] + endpointConfigs[1]
 
 	tunnel := wgTurnOnIANFromExistingTunnel(a, aConfig, aIp)
 
-	// configureDevices(t, aDev, bDev)
+	bDev := device.NewDevice(b, conn.NewStdNetBind(), device.NewLogger(device.LogLevelSilent, ""))
+
+	bDev.IpcSet(bConfig)
 
 	bDev.Up()
 
-	var recv_fd uintptr
-	var send_fd uintptr
+	pinger := wgOpenInTunnelICMP(tunnel, cstring("1.2.3.5"))
 
-	// do the test here
-	wgOpenInTunnelICMP(tunnel, "1.2.3.5", &recv_fd, &send_fd)
-	// sendFile := os.NewFile(send_fd, "send")
-	// recvFile := os.NewFile(recv_fd, "recv")
+	result := wgSendAndAwaitInTunnelPing(tunnel, pinger)
 
-	// listen for ICMP connections on interface B
+	assert.Equal(t, result, int32(0))
 
-	// do we need to respond to pings manually? If so, implement the below
-	go func() {
-		// Start accepting ICMP connections on B, and reply as if for pings
+	wgCloseInTunnelICMP(pinger)
+}
 
-	}()
+// Test functions for maintaining handle mappings
+func TestHandleInsertion(t *testing.T) {
+	handles := make(map[int32]string)
 
-	ping := icmp.Message{
-		Type: ipv4.ICMPTypeEcho,
-		Body: &icmp.Echo{
-			ID:   1234,
-			Seq:  1,
-			Data: make([]byte, 4),
-		},
-	}
-	pingBytes, err := ping.Marshal(nil)
-	if err != nil {
-		log.Fatal("ping.Marshal failed")
-	}
-	// sendFile.Write(pingBytes)
-	syscall.Write(int(send_fd), pingBytes)
-
-	// time.Sleep(1)
-	// sendFile.Write(pingBytes)
-
-	readBuf := make([]byte, 1024)
-	// numRead, err := recvFile.Read(readBuf)
-
-	numRead, err := syscall.Read(int(recv_fd), readBuf)
-
-	fmt.Printf("err = %v\n", err)
-
-	assert.Greater(t, numRead, 0)
-
-	fmt.Printf("bytes received: %d\n", numRead)
-
-	// parse the packet, check that ID and Seq match up
-
+	h1 := insertHandle(handles, "foo")
+	assert.Equal(t, len(handles), 1)
+	h2 := insertHandle(handles, "bar")
+	assert.Equal(t, len(handles), 2)
+	assert.Equal(t, handles[h1], "foo")
+	assert.Equal(t, handles[h2], "bar")
+	delete(handles, h2)
+	_, ok := handles[h2]
+	assert.False(t, ok)
 }

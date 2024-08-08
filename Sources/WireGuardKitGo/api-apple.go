@@ -15,9 +15,11 @@ import "C"
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/netip"
 	"os"
 	"os/signal"
@@ -27,6 +29,8 @@ import (
 	"time"
 	"unsafe"
 
+	"golang.org/x/net/icmp"
+	"golang.org/x/net/ipv4"
 	"golang.org/x/sys/unix"
 	"golang.zx2c4.com/wireguard/apple/multihoptun"
 	"golang.zx2c4.com/wireguard/conn"
@@ -78,6 +82,29 @@ type tunnelHandle struct {
 }
 
 var tunnelHandles = make(map[int32]tunnelHandle)
+
+type HandleList[T interface{}] map[int32]T
+
+// insert a value and return the positive handle, or errDeviceLimitHit if full
+func insertHandle[T interface{}](hl map[int32]T, value T) int32 {
+	var i int32
+	for i = 0; i < math.MaxInt32; i++ {
+		if _, exists := hl[i]; !exists {
+			break
+		}
+	}
+	if i == math.MaxInt32 {
+		return errDeviceLimitHit
+	}
+	hl[i] = value
+	return i
+}
+
+type icmpHandle struct {
+	icmpSocket *net.Conn
+}
+
+var icmpHandles = make(map[int32]icmpHandle)
 
 func init() {
 	signals := make(chan os.Signal)
@@ -433,7 +460,72 @@ func testOpenInTunnelUDP(tunnelHandle int32, sendAddrPort, recvAddrPort netip.Ad
 
 }
 
-func openInTunnelICMP(tunnelHandle int32, address string) (*os.File, *os.File) {
+func wgOpenInTunnelICMP(tunnelHandle int32, address *C.char) int32 {
+	handle, ok := tunnelHandles[tunnelHandle]
+	if !ok || handle.virtualNet == nil {
+		return -1 // FIXME
+	}
+	conn, _ := handle.virtualNet.Dial("ping4", C.GoString(address))
+
+	result := insertHandle(icmpHandles, icmpHandle{&conn})
+	if result < 0 {
+		conn.Close()
+	}
+	return result
+}
+
+func wgCloseInTunnelICMP(socketHandle int32) bool {
+	socket, ok := icmpHandles[socketHandle]
+	if ok {
+		(*(socket.icmpSocket)).Close()
+		delete(icmpHandles, socketHandle)
+	}
+	return ok
+}
+
+// the next sequence number to send in pings. We keep this global, though if there's a reason, we could put it in each opened socket structure
+var pingSeqNumber int = 1
+
+func wgSendAndAwaitInTunnelPing(tunnelHandle int32, socketHandle int32) int32 {
+	socket, ok := icmpHandles[socketHandle]
+	if !ok {
+		return -1 // FIXME
+	}
+	pingdata := []byte("cookie woz ere")
+	ping := icmp.Message{
+		Type: ipv4.ICMPTypeEcho,
+		Body: &icmp.Echo{
+			ID:   1234,
+			Seq:  pingSeqNumber,
+			Data: pingdata,
+		},
+	}
+	pingBytes, err := ping.Marshal(nil)
+	_, err = (*(socket.icmpSocket)).Write(pingBytes)
+	if err != nil {
+		return -1
+	}
+	readBuff := make([]byte, 1024)
+	readBytes, err := (*(socket.icmpSocket)).Read(readBuff)
+	if readBytes <= 0 || err != nil {
+		return -1
+	}
+	replyPacket, err := icmp.ParseMessage(1, readBuff[:readBytes])
+	if err != nil {
+		return -1
+	}
+	replyPing, ok := replyPacket.Body.(*icmp.Echo)
+	if !ok {
+		return -1
+	}
+	if replyPing.Seq != pingSeqNumber || !bytes.Equal(replyPing.Data, pingdata) {
+		return -1
+	}
+	return 0
+}
+
+// the previous, stream-based version
+func _openInTunnelICMP(tunnelHandle int32, address string) (*os.File, *os.File) {
 	handle, ok := tunnelHandles[tunnelHandle]
 	if !ok || handle.virtualNet == nil {
 		return nil, nil
@@ -486,7 +578,7 @@ func openInTunnelICMP(tunnelHandle int32, address string) (*os.File, *os.File) {
 	return recvRx, sendTx
 }
 
-func wgOpenInTunnelICMP(tunnelHandle int32, address string, recv_fd *uintptr, send_fd *uintptr) int {
+func _wgOpenInTunnelICMP(tunnelHandle int32, address string, recv_fd *uintptr, send_fd *uintptr) int {
 	handle, ok := tunnelHandles[tunnelHandle]
 	if !ok || handle.virtualNet == nil {
 		return -1
