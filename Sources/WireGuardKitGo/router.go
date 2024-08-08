@@ -19,11 +19,6 @@ import (
 // See: https://github.com/WireGuard/wireguard-go/blob/12269c2761734b15625017d8565745096325392f/tun/tun_darwin.go#L228
 const defaultOffset = 4
 
-// how many buffers we should preallocate.
-// Currently, WireGuardGo sends buffers one at a time, so this is 128, though the API says that
-// this is not set in stone.
-const expectedBufferCount = 128
-
 // A packet batch contains within itself a buffer used to store packet data and
 // whether it is a virtual packet or not. This allows an individual reader
 // goroutine to send a read packet to whatever `Router.Read` where its contents
