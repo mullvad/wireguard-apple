@@ -247,7 +247,7 @@ public class WireGuardAdapter {
     ///   - tunnelConfiguration: tunnel configuration.
     ///   - completionHandler: completion handler.
     public func start(tunnelConfiguration: TunnelConfiguration, daita: DaitaConfiguration? = nil, completionHandler: @escaping (WireGuardAdapterError?) -> Void) {
-        startMultihop(exitConfiguration: tunnelConfiguration, entryConfiguration: nil, completionHandler: completionHandler)
+        startMultihop(exitConfiguration: tunnelConfiguration, entryConfiguration: nil, daita: daita, completionHandler: completionHandler)
     }
 
     /// Stop the tunnel.
@@ -446,7 +446,7 @@ public class WireGuardAdapter {
         }
 
         let privateAddr = "\(privateAddress)"
-        
+
         let handle = if let entryWgConfig {
             wgTurnOnMultihop(exitWgConfig, entryWgConfig, privateAddr, tunnelFileDescriptor, daita?.machines ?? nil, daita?.maxEvents ?? 0, daita?.maxActions ?? 0)
         } else {
@@ -465,6 +465,7 @@ public class WireGuardAdapter {
     /// Resolves the hostnames in the given tunnel configuration and return settings generator.
     /// - Parameter exitConfiguration: an instance of type `TunnelConfiguration`.
     /// - Parameter entryConfiguration: an optional instance of type `TunnelConfiguration` for the entry WireGuard device
+    /// - Parameter daita: an optional instance of type `DaitaConfiguration` for the configuration used by the Daita feature
     /// - Throws: an error of type `WireGuardAdapterError`.
     /// - Returns: an instance of type `PacketTunnelSettingsGenerator`.
     private func makeSettingsGenerator(with exitConfiguration: TunnelConfiguration, entryConfiguration: TunnelConfiguration? = nil, daita: DaitaConfiguration? = nil) throws -> PacketTunnelSettingsGenerator {
@@ -473,12 +474,14 @@ public class WireGuardAdapter {
         var entry: DeviceConfiguration? = nil
         if let entryConfiguration {
             let resolvedEntryEndpoints = try self.resolvePeers(for: entryConfiguration)
-            entry = DeviceConfiguration(configuration: entryConfiguration, resolvedEndpoints: resolvedEntryEndpoints)
+            entry = DeviceConfiguration(configuration: entryConfiguration, resolvedEndpoints: resolvedEntryEndpoints, reResolveEndpoint: true)
         }
         
+        // Disable NAT64 resolution for exit relays when multihop is enabled
         return PacketTunnelSettingsGenerator(
-            exit: DeviceConfiguration(configuration: exitConfiguration, resolvedEndpoints: resolvedExitEndpoints),
-            entry: entry
+            exit: DeviceConfiguration(configuration: exitConfiguration, resolvedEndpoints: resolvedExitEndpoints, reResolveEndpoint: entry == nil),
+            entry: entry,
+            daita: daita
         )
     }
 
