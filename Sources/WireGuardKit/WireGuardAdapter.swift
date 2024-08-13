@@ -431,7 +431,7 @@ public class WireGuardAdapter {
         }
 
         let privateAddr = "\(privateAddress)"
-        
+
         let handle = if let entryWgConfig {
             wgTurnOnMultihop(exitWgConfig, entryWgConfig, privateAddr, tunnelFileDescriptor, daita?.machines ?? nil, daita?.maxEvents ?? 0, daita?.maxActions ?? 0)
         } else {
@@ -449,6 +449,7 @@ public class WireGuardAdapter {
     /// Resolves the hostnames in the given tunnel configuration and return settings generator.
     /// - Parameter exitConfiguration: an instance of type `TunnelConfiguration`.
     /// - Parameter entryConfiguration: an optional instance of type `TunnelConfiguration` for the entry WireGuard device
+    /// - Parameter daita: an optional instance of type `DaitaConfiguration` for the configuration used by the Daita feature
     /// - Throws: an error of type `WireGuardAdapterError`.
     /// - Returns: an instance of type `PacketTunnelSettingsGenerator`.
     private func makeSettingsGenerator(with exitConfiguration: TunnelConfiguration, entryConfiguration: TunnelConfiguration? = nil, daita: DaitaConfiguration? = nil) throws -> PacketTunnelSettingsGenerator {
@@ -462,7 +463,8 @@ public class WireGuardAdapter {
         
         return PacketTunnelSettingsGenerator(
             exit: DeviceConfiguration(configuration: exitConfiguration, resolvedEndpoints: resolvedExitEndpoints),
-            entry: entry
+            entry: entry,
+            daita: daita
         )
     }
 
