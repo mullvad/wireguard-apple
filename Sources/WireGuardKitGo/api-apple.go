@@ -240,7 +240,7 @@ func wgTurnOnMultihopInner(tun tun.Device, exitSettings *C.char, entrySettings *
 
 	exitConfigString := C.GoString(exitSettings)
 	entryConfigString := C.GoString(entrySettings)
-	exitEndpoint := parseEndpointFromGoConfig(exitConfigString)
+	exitEndpoint := parseEndpointFromConfig(exitConfigString)
 	if exitEndpoint == nil {
 		tun.Close()
 		return errNoEndpointInConfig
