@@ -16,6 +16,7 @@ import "C"
 import (
 	"bufio"
 	"bytes"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"math"
@@ -51,6 +52,12 @@ const (
 	errDeviceLimitHit
 	errGetMtu
 	errNoEndpointInConfig
+	// Configuration for a given device contains no peers. It is peerless.
+	errBadEntryConfig
+	// After applying a configuration to a given WireGuard device, it fails to return a peer it was configured to have.
+	errNoPeer
+	// Failed to enable DAITA
+	errEnableDaita
 )
 
 var loggerFunc unsafe.Pointer
@@ -167,7 +174,7 @@ func bringUpDevice(dev *device.Device, settings string, logger *device.Logger) e
 	return nil
 }
 
-func addTunnelFromDevice(dev *device.Device, entryDev *device.Device, settings string, entrySettings string, virtualNet *netstack.Net, logger *device.Logger) int32 {
+func addTunnelFromDevice(dev *device.Device, entryDev *device.Device, settings string, entrySettings string, virtualNet *netstack.Net, logger *device.Logger, maybeNotMachines *C.char, maybeNotMaxEvents uint32, maybeNotMaxActions uint32) int32 {
 	err := bringUpDevice(dev, settings, logger)
 	if err != nil {
 		return errBadWgConfig
@@ -178,6 +185,14 @@ func addTunnelFromDevice(dev *device.Device, entryDev *device.Device, settings s
 		if err != nil {
 			dev.Close()
 			return errBadWgConfig
+		}
+	}
+
+	// Enable DAITA if DAITA parameters are passed through
+	if maybeNotMachines != nil {
+		returnValue := configureDaita(entryDev, entryConfigString, C.GoString(maybeNotMachines), maybeNotMaxEvents, maybeNotMaxActions)
+		if returnValue != 0 {
+			return returnValue
 		}
 	}
 
@@ -195,24 +210,27 @@ func addTunnelFromDevice(dev *device.Device, entryDev *device.Device, settings s
 	return i
 }
 
-//export wgTurnOn
-func wgTurnOn(settings *C.char, tunFd int32) int32 {
-	logger := &device.Logger{
-		Verbosef: CLogger(0).Printf,
-		Errorf:   CLogger(1).Printf,
-	}
-	tun, errCode := openTUNFromSocket(tunFd, logger)
-	if tun == nil {
-		return errCode
-	}
+func parseFirstPubkeyFromConfig(config string) *device.NoisePublicKey {
+	scanner := bufio.NewScanner(strings.NewReader(config))
+	for scanner.Scan() {
+		line := scanner.Text()
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
 
-	logger.Verbosef("Attaching to interface")
-	dev := device.NewDevice(tun, conn.NewStdNetBind(), logger)
-
-	return addTunnelFromDevice(dev, nil, C.GoString(settings), "", nil, logger)
+		if key == "public_key" {
+			pubkey, err := hex.DecodeString(value)
+			if err == nil {
+				key := device.NoisePublicKey(pubkey)
+				return &key
+			}
+		}
+	}
+	return nil
 }
 
-func wgTurnOnMultihopInner(tun tun.Device, exitSettings *C.char, entrySettings *C.char, privateIp *C.char, exitMtu int, logger *device.Logger) int32 {
+func wgTurnOnMultihopInner(tun tun.Device, exitSettings *C.char, entrySettings *C.char, privateIp *C.char, exitMtu int, logger *device.Logger, maybeNotMachines *C.char, maybeNotMaxEvents uint32, maybeNotMaxActions uint32) int32 {
 	ip, err := netip.ParseAddr(C.GoString(privateIp))
 	if err != nil {
 		logger.Errorf("Failed to parse private IP: %v", err)
@@ -233,11 +251,11 @@ func wgTurnOnMultihopInner(tun tun.Device, exitSettings *C.char, entrySettings *
 	exitDev := device.NewDevice(tun, singletun.Binder(), logger)
 	entryDev := device.NewDevice(&singletun, conn.NewStdNetBind(), logger)
 
-	return addTunnelFromDevice(exitDev, entryDev, exitConfigString, entryConfigString, nil, logger)
+	return addTunnelFromDevice(exitDev, entryDev, exitConfigString, entryConfigString, nil, logger, maybeNotMachines, maybeNotMaxEvents, maybeNotMaxActions)
 }
 
 //export wgTurnOnMultihop
-func wgTurnOnMultihop(exitSettings *C.char, entrySettings *C.char, privateIp *C.char, tunFd int32) int32 {
+func wgTurnOnMultihop(exitSettings *C.char, entrySettings *C.char, privateIp *C.char, tunFd int32, maybenotMachines *C.char, maybeNotMaxEvents uint32, maybeNotMaxActons uint32) int32 {
 	logger := &device.Logger{
 		Verbosef: CLogger(0).Printf,
 		Errorf:   CLogger(1).Printf,
@@ -254,8 +272,24 @@ func wgTurnOnMultihop(exitSettings *C.char, entrySettings *C.char, privateIp *C.
 		return errGetMtu
 	}
 
-	return wgTurnOnMultihopInner(tun, exitSettings, entrySettings, privateIp, exitMtu, logger)
+	return wgTurnOnMultihopInner(tun, exitSettings, entrySettings, privateIp, exitMtu, logger, maybenotMachines, maybeNotMaxEvents, maybeNotMaxActons)
+}
 
+//export wgTurnOn
+func wgTurnOn(settings *C.char, tunFd int32, maybeNotMachines *C.char, maybeNotMaxEvents uint32, maybeNotMaxActions uint32) int32 {
+	logger := &device.Logger{
+		Verbosef: CLogger(0).Printf,
+		Errorf:   CLogger(1).Printf,
+	}
+	tun, errCode := openTUNFromSocket(tunFd, logger)
+	if tun == nil {
+		return errCode
+	}
+
+	logger.Verbosef("Attaching to interface")
+	dev := device.NewDevice(tun, conn.NewStdNetBind(), logger)
+
+	return addTunnelFromDevice(dev, nil, C.GoString(settings), "", nil, logger)
 }
 
 func wgTurnOnIANFromExistingTunnel(tun tun.Device, settings string, privateAddr netip.Addr) int32 {
@@ -524,116 +558,6 @@ func wgSendAndAwaitInTunnelPing(tunnelHandle int32, socketHandle int32) int32 {
 	return 0
 }
 
-// the previous, stream-based version
-func _openInTunnelICMP(tunnelHandle int32, address string) (*os.File, *os.File) {
-	handle, ok := tunnelHandles[tunnelHandle]
-	if !ok || handle.virtualNet == nil {
-		return nil, nil
-	}
-	conn, _ := handle.virtualNet.Dial("ping4", address)
-	sendRx, sendTx, err := os.Pipe()
-	recvRx, recvTx, err := os.Pipe()
-	if err != nil {
-		return nil, nil
-	}
-	// unix.SetNonblock(int(recvRx.Fd()), false)
-	rxShutdown := make(chan struct{})
-	sendbuf := make([]byte, 1024)
-	go func() { // the sender
-		defer sendRx.Close()
-		for {
-			select {
-			case _ = <-rxShutdown:
-				return
-			default:
-			}
-			count, err := sendRx.Read(sendbuf)
-			if err == io.EOF {
-				rxShutdown <- struct{}{}
-			}
-			fmt.Printf("Sent %d bytes to connection\n", count)
-			conn.Write(sendbuf[:count])
-		}
-	}()
-	recvbuf := make([]byte, 1024)
-	go func() { // the receiver
-		defer func() {
-			fmt.Printf("Closing recvTx\n")
-			recvTx.Close()
-		}()
-		for {
-			select {
-			case _ = <-rxShutdown:
-				return
-			default:
-			}
-			count, err := conn.Read(recvbuf)
-			if err == io.EOF {
-				rxShutdown <- struct{}{}
-			}
-			fmt.Printf("Received %d bytes from connection\n", count)
-			recvTx.Write(recvbuf[:count])
-		}
-	}()
-	return recvRx, sendTx
-}
-
-func _wgOpenInTunnelICMP(tunnelHandle int32, address string, recv_fd *uintptr, send_fd *uintptr) int {
-	handle, ok := tunnelHandles[tunnelHandle]
-	if !ok || handle.virtualNet == nil {
-		return -1
-	}
-	conn, _ := handle.virtualNet.Dial("ping4", address)
-	sendRx, sendTx, err := os.Pipe()
-	recvRx, recvTx, err := os.Pipe()
-	if err != nil {
-		return -1
-	}
-	// unix.SetNonblock(int(recvRx.Fd()), false)
-	sendbuf := make([]byte, 1024)
-	rxShutdown := make(chan struct{})
-	go func() { // the sender
-		defer sendRx.Close()
-		for {
-
-			select {
-			case _ = <-rxShutdown:
-				return
-			default:
-			}
-			count, err := sendRx.Read(sendbuf)
-			if err == io.EOF {
-				rxShutdown <- struct{}{}
-			}
-			fmt.Printf("Sent %d bytes to connection\n", count)
-			conn.Write(sendbuf[:count])
-		}
-	}()
-	recvbuf := make([]byte, 1024)
-	go func() { // the receiver
-		defer func() {
-			fmt.Printf("Closing recvTx\n")
-			recvTx.Close()
-		}()
-		for {
-			select {
-			case _ = <-rxShutdown:
-				return
-			default:
-			}
-			count, err := conn.Read(recvbuf)
-			if err == io.EOF {
-				rxShutdown <- struct{}{}
-			}
-			fmt.Printf("Received %d bytes from connection\n", count)
-			recvTx.Write(recvbuf[:count])
-		}
-	}()
-	*recv_fd = recvRx.Fd()
-	*send_fd = sendTx.Fd()
-	return 0
-}
-
 //export wgVersion
 func wgVersion() *C.char {
 	info, ok := debug.ReadBuildInfo()
@@ -650,6 +574,26 @@ func wgVersion() *C.char {
 		}
 	}
 	return C.CString("unknown")
+}
+
+func configureDaita(device *device.Device, config string, machines string, maxEvents uint32, maxActions uint32) int32 {
+	entryPeerPubkey := parseFirstPubkeyFromConfig(config)
+	if entryPeerPubkey == nil {
+		return errBadEntryConfig
+	}
+	peer := device.LookupPeer(*entryPeerPubkey)
+	if peer == nil {
+		return errNoPeer
+	}
+
+	const maxPaddingBytes = 0.0
+	const maxBlockingBytes = 0.0
+
+	if !peer.EnableDaita(machines, uint(maxEvents), uint(maxActions), maxPaddingBytes, maxBlockingBytes) {
+		return errEnableDaita
+	}
+
+	return 0
 }
 
 func main() {}
