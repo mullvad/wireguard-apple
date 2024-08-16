@@ -20,6 +20,9 @@ extern int64_t wgSetConfig(int handle, const char *exitSettings, const char *ent
 extern char *wgGetConfig(int handle);
 extern void wgBumpSockets(int handle);
 extern void wgDisableSomeRoamingForBrokenMobileSemantics(int handle);
+extern int wgOpenInTunnelICMP(int tunnelHandle, const char *address);
+extern int wgCloseInTunnelICMP(int socketHandle);
+extern int wgSendAndAwaitInTunnelPing(int tunnelHandle, int socketHandle);
 extern const char *wgVersion();
 
 #endif
