@@ -65,6 +65,8 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             case .invalidState:
                 // Must never happen
                 fatalError()
+            case .noInterfaceIp:
+                fatalError()
             }
         }
     }
