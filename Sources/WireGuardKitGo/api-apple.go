@@ -536,13 +536,14 @@ func wgSendAndAwaitInTunnelPing(tunnelHandle int32, socketHandle int32) int32 {
 	ping := icmp.Message{
 		Type: ipv4.ICMPTypeEcho,
 		Body: &icmp.Echo{
-			ID:   1234,
+			ID:   758,
 			Seq:  pingSeqNumber,
 			Data: pingdata,
 		},
 	}
 	defer func() { pingSeqNumber += 1 }()
 	pingBytes, err := ping.Marshal(nil)
+	(*(socket.icmpSocket)).SetReadDeadline(time.Now().Add(time.Second * 10))
 	_, err = (*(socket.icmpSocket)).Write(pingBytes)
 	if err != nil {
 		return errICMPWriteSocket
