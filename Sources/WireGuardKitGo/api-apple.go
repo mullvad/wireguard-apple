@@ -58,6 +58,12 @@ const (
 	errNoPeer
 	// Failed to enable DAITA
 	errEnableDaita
+	// ICMP errors
+	errICMPOpenSocket
+	errICMPWriteSocket
+	errICMPReadSocket
+	errICMPResponseFormat
+	errICMPResponseContent
 )
 
 var loggerFunc unsafe.Pointer
@@ -520,10 +526,11 @@ func wgCloseInTunnelICMP(socketHandle int32) bool {
 // the next sequence number to send in pings. We keep this global, though if there's a reason, we could put it in each opened socket structure
 var pingSeqNumber int = 1
 
+// this returns the sequence number or a negative value if an error occurred
 func wgSendAndAwaitInTunnelPing(tunnelHandle int32, socketHandle int32) int32 {
 	socket, ok := icmpHandles[socketHandle]
 	if !ok {
-		return -1 // FIXME
+		return errICMPOpenSocket
 	}
 	pingdata := []byte("cookie woz ere")
 	ping := icmp.Message{
@@ -534,28 +541,29 @@ func wgSendAndAwaitInTunnelPing(tunnelHandle int32, socketHandle int32) int32 {
 			Data: pingdata,
 		},
 	}
+	defer func() { pingSeqNumber += 1 }()
 	pingBytes, err := ping.Marshal(nil)
 	_, err = (*(socket.icmpSocket)).Write(pingBytes)
 	if err != nil {
-		return -1
+		return errICMPWriteSocket
 	}
 	readBuff := make([]byte, 1024)
 	readBytes, err := (*(socket.icmpSocket)).Read(readBuff)
 	if readBytes <= 0 || err != nil {
-		return -1
+		return errICMPReadSocket
 	}
 	replyPacket, err := icmp.ParseMessage(1, readBuff[:readBytes])
 	if err != nil {
-		return -1
+		return errICMPResponseFormat
 	}
 	replyPing, ok := replyPacket.Body.(*icmp.Echo)
 	if !ok {
-		return -1
+		return errICMPResponseFormat
 	}
 	if replyPing.Seq != pingSeqNumber || !bytes.Equal(replyPing.Data, pingdata) {
-		return -1
+		return errICMPResponseContent
 	}
-	return 0
+	return int32(pingSeqNumber)
 }
 
 //export wgVersion
