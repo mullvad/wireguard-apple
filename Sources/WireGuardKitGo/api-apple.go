@@ -500,6 +500,7 @@ func testOpenInTunnelUDP(tunnelHandle int32, sendAddrPort, recvAddrPort netip.Ad
 
 }
 
+//export wgOpenInTunnelICMP
 func wgOpenInTunnelICMP(tunnelHandle int32, address *C.char) int32 {
 	handle, ok := tunnelHandles[tunnelHandle]
 	if !ok || handle.virtualNet == nil {
@@ -514,6 +515,7 @@ func wgOpenInTunnelICMP(tunnelHandle int32, address *C.char) int32 {
 	return result
 }
 
+//export wgCloseInTunnelICMP
 func wgCloseInTunnelICMP(socketHandle int32) bool {
 	socket, ok := icmpHandles[socketHandle]
 	if ok {
@@ -527,6 +529,8 @@ func wgCloseInTunnelICMP(socketHandle int32) bool {
 var pingSeqNumber int = 1
 
 // this returns the sequence number or a negative value if an error occurred
+//
+//export wgSendAndAwaitInTunnelPing
 func wgSendAndAwaitInTunnelPing(tunnelHandle int32, socketHandle int32) int32 {
 	socket, ok := icmpHandles[socketHandle]
 	if !ok {
