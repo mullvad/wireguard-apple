@@ -585,7 +585,18 @@ public class WireGuardAdapter {
         #error("Unsupported")
         #endif
     }
+}
 
+// A protocol encompassing the stateful ICMP ping capabilities of the WireGuardAdapter, decoupling them from its implementation
+public protocol ICMPPingProvider {
+    func openICMP(address: IPv4Address) throws
+
+    func closeICMP()
+
+    func sendICMPPing() throws -> Int32
+}
+
+extension WireGuardAdapter: ICMPPingProvider {
     /// MARK: ICMP Ping functionality
     public func openICMP(address: IPv4Address) throws {
         guard case .started(let tunnelHandle, _) = self.state else {
