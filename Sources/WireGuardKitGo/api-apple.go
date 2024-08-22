@@ -64,6 +64,8 @@ const (
 	errICMPReadSocket
 	errICMPResponseFormat
 	errICMPResponseContent
+	// no such tunnel exists
+	errInvalidTunnel
 )
 
 var loggerFunc unsafe.Pointer
@@ -504,7 +506,7 @@ func testOpenInTunnelUDP(tunnelHandle int32, sendAddrPort, recvAddrPort netip.Ad
 func wgOpenInTunnelICMP(tunnelHandle int32, address *C.char) int32 {
 	handle, ok := tunnelHandles[tunnelHandle]
 	if !ok || handle.virtualNet == nil {
-		return -1 // FIXME
+		return errInvalidTunnel
 	}
 	conn, _ := handle.virtualNet.Dial("ping4", C.GoString(address))
 
