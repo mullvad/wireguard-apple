@@ -232,7 +232,7 @@ public class WireGuardAdapter {
     ///   - tunnelConfiguration: tunnel configuration.
     ///   - completionHandler: completion handler.
     public func start(tunnelConfiguration: TunnelConfiguration, daita: DaitaConfiguration? = nil, completionHandler: @escaping (WireGuardAdapterError?) -> Void) {
-        startMultihop(exitConfiguration: tunnelConfiguration, entryConfiguration: nil, completionHandler: completionHandler)
+        startMultihop(exitConfiguration: tunnelConfiguration, entryConfiguration: nil, daita: daita, completionHandler: completionHandler)
     }
 
     /// Stop the tunnel.
