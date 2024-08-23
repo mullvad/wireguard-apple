@@ -450,8 +450,8 @@ public class WireGuardAdapter {
         let handle = if let entryWgConfig {
             wgTurnOnMultihop(exitWgConfig, entryWgConfig, privateAddr, tunnelFileDescriptor, daita?.machines ?? nil, daita?.maxEvents ?? 0, daita?.maxActions ?? 0)
         } else {
-            //wgTurnOnIAN(exitWgConfig, tunnelFileDescriptor, privateAddr)
-            wgTurnOn(exitWgConfig, tunnelFileDescriptor, daita?.machines ?? nil, daita?.maxEvents ?? 0, daita?.maxActions ?? 0)
+            wgTurnOnIAN(exitWgConfig, tunnelFileDescriptor, privateAddr, daita?.machines ?? nil, daita?.maxEvents ?? 0, daita?.maxActions ?? 0)
+//            wgTurnOn(exitWgConfig, tunnelFileDescriptor, daita?.machines ?? nil, daita?.maxEvents ?? 0, daita?.maxActions ?? 0)
         }
         if handle < 0 {
             throw WireGuardAdapterError.startWireGuardBackend(handle)
