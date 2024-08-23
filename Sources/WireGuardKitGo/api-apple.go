@@ -261,7 +261,47 @@ func wgTurnOnMultihopInner(tun tun.Device, exitSettings *C.char, entrySettings *
 	exitDev := device.NewDevice(tun, singletun.Binder(), logger)
 	entryDev := device.NewDevice(&singletun, conn.NewStdNetBind(), logger)
 
-	return addTunnelFromDevice(exitDev, entryDev, exitConfigString, entryConfigString, nil, logger, maybeNotMachines, maybeNotMaxEvents, maybeNotMaxActions)
+	// refactoring unrolled for better mergeability, until the dust settles
+	// return addTunnelFromDevice(exitDev, entryDev, exitConfigString, entryConfigString, nil, logger, maybeNotMachines, maybeNotMaxEvents, maybeNotMaxActions)
+	err = entryDev.IpcSet(entryConfigString)
+	if err != nil {
+		logger.Errorf("Unable to set IPC settings for entry: %v", err)
+		tun.Close()
+		return errBadWgConfig
+	}
+
+	err = exitDev.IpcSet(exitConfigString)
+	if err != nil {
+		logger.Errorf("Unable to set IPC settings for exit: %v", err)
+		tun.Close()
+		return errBadWgConfig
+	}
+
+	exitDev.Up()
+	entryDev.Up()
+
+	// Enable DAITA if DAITA parameters are passed through
+	if maybeNotMachines != nil {
+		returnValue := configureDaita(entryDev, entryConfigString, C.GoString(maybeNotMachines), maybeNotMaxEvents, maybeNotMaxActions)
+		if returnValue != 0 {
+			return returnValue
+		}
+	}
+
+	logger.Verbosef("Device started")
+
+	var i int32
+	for i = 0; i < math.MaxInt32; i++ {
+		if _, exists := tunnelHandles[i]; !exists {
+			break
+		}
+	}
+	if i == math.MaxInt32 {
+		tun.Close()
+		return errDeviceLimitHit
+	}
+	tunnelHandles[i] = tunnelHandle{exitDev, entryDev, logger, nil}
+	return i
 }
 
 //export wgTurnOnMultihop
@@ -271,9 +311,28 @@ func wgTurnOnMultihop(exitSettings *C.char, entrySettings *C.char, privateIp *C.
 		Errorf:   CLogger(1).Printf,
 	}
 
-	tun, errCode := openTUNFromSocket(tunFd, logger)
-	if tun == nil {
-		return errCode
+	// refactoring unrolled for better mergeability, until the dust settles
+	// tun, errCode := openTUNFromSocket(tunFd, logger)
+	// if tun == nil {
+	// 	return errCode
+	// }
+	dupTunFd, err := unix.Dup(int(tunFd))
+	if err != nil {
+		logger.Errorf("Unable to dup tun fd: %v", err)
+		return errDup
+	}
+
+	err = unix.SetNonblock(dupTunFd, true)
+	if err != nil {
+		logger.Errorf("Unable to set tun fd as non blocking: %v", err)
+		unix.Close(dupTunFd)
+		return errSetNonblock
+	}
+	tun, err := tun.CreateTUNFromFile(os.NewFile(uintptr(dupTunFd), "/dev/tun"), 0)
+	if err != nil {
+		logger.Errorf("Unable to create new tun device from fd: %v", err)
+		unix.Close(dupTunFd)
+		return errCreateTun
 	}
 
 	exitMtu, err := tun.MTU()
@@ -291,15 +350,66 @@ func wgTurnOn(settings *C.char, tunFd int32, maybeNotMachines *C.char, maybeNotM
 		Verbosef: CLogger(0).Printf,
 		Errorf:   CLogger(1).Printf,
 	}
-	tun, errCode := openTUNFromSocket(tunFd, logger)
-	if tun == nil {
-		return errCode
+	// refactoring unrolled for better mergeability, until the dust settles
+	// tun, errCode := openTUNFromSocket(tunFd, logger)
+	// if tun == nil {
+	// 	return errCode
+	// }
+	dupTunFd, err := unix.Dup(int(tunFd))
+	if err != nil {
+		logger.Errorf("Unable to dup tun fd: %v", err)
+		return -1
+	}
+
+	err = unix.SetNonblock(dupTunFd, true)
+	if err != nil {
+		logger.Errorf("Unable to set tun fd as non blocking: %v", err)
+		unix.Close(dupTunFd)
+		return -1
+	}
+	tun, err := tun.CreateTUNFromFile(os.NewFile(uintptr(dupTunFd), "/dev/tun"), 0)
+	if err != nil {
+		logger.Errorf("Unable to create new tun device from fd: %v", err)
+		unix.Close(dupTunFd)
+		return -1
 	}
 
 	logger.Verbosef("Attaching to interface")
 	dev := device.NewDevice(tun, conn.NewStdNetBind(), logger)
 
-	return addTunnelFromDevice(dev, nil, C.GoString(settings), "", nil, logger, maybeNotMachines, maybeNotMaxEvents, maybeNotMaxActions)
+	// refactoring unrolled for better mergeability, until the dust settles
+	// return addTunnelFromDevice(dev, nil, C.GoString(settings), "", nil, logger, maybeNotMachines, maybeNotMaxEvents, maybeNotMaxActions)
+	settingsString := C.GoString(settings)
+	err = dev.IpcSet(C.GoString(settings))
+	if err != nil {
+		logger.Errorf("Unable to set IPC settings: %v", err)
+		unix.Close(dupTunFd)
+		return -1
+	}
+
+	dev.Up()
+	logger.Verbosef("Device started")
+
+	// Enable DAITA if DAITA parameters are passed through
+	if maybeNotMachines != nil {
+		returnValue := configureDaita(dev, settingsString, C.GoString(maybeNotMachines), maybeNotMaxEvents, maybeNotMaxActions)
+		if returnValue != 0 {
+			return returnValue
+		}
+	}
+
+	var i int32
+	for i = 1; i < math.MaxInt32; i++ {
+		if _, exists := tunnelHandles[i]; !exists {
+			break
+		}
+	}
+	if i == math.MaxInt32 {
+		unix.Close(dupTunFd)
+		return -1
+	}
+	tunnelHandles[i] = tunnelHandle{dev, nil, logger, nil}
+	return i
 }
 
 func wgTurnOnIANFromExistingTunnel(tun tun.Device, settings string, privateAddr netip.Addr, maybeNotMachines *C.char, maybeNotMaxEvents uint32, maybeNotMaxActions uint32) int32 {
