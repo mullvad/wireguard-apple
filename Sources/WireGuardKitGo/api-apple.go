@@ -241,6 +241,7 @@ func parseFirstPubkeyFromConfig(config string) *device.NoisePublicKey {
 }
 
 func wgTurnOnMultihopInner(tun tun.Device, exitSettings *C.char, entrySettings *C.char, privateIp *C.char, exitMtu int, logger *device.Logger, maybeNotMachines *C.char, maybeNotMaxEvents uint32, maybeNotMaxActions uint32) int32 {
+	useIAN := true
 	ip, err := netip.ParseAddr(C.GoString(privateIp))
 	if err != nil {
 		logger.Errorf("Failed to parse private IP: %v", err)
@@ -258,8 +259,36 @@ func wgTurnOnMultihopInner(tun tun.Device, exitSettings *C.char, entrySettings *
 
 	singletun := multihoptun.NewMultihopTun(ip, exitEndpoint.Addr(), exitEndpoint.Port(), exitMtu+80)
 
+	// var entryTun tun.Device
+	var entryDev *device.Device
+	var virtualNet *netstack.Net
+
 	exitDev := device.NewDevice(tun, singletun.Binder(), logger)
-	entryDev := device.NewDevice(&singletun, conn.NewStdNetBind(), logger)
+
+	if useIAN {
+		privateAddrStr := C.GoString(privateIp)
+		privateAddr, err := netip.ParseAddr(privateAddrStr)
+		if err != nil {
+			logger.Errorf("Invalid address: %s", privateAddrStr)
+			return -1
+		}
+
+		vtun, virtualNet, err := netstack.CreateNetTUN([]netip.Addr{privateAddr}, []netip.Addr{}, 1280)
+		if err != nil {
+			logger.Errorf("Failed to initialize virtual tunnel device: %v", err)
+			tun.Close()
+			return -5
+		}
+		if virtualNet == nil {
+			logger.Errorf("Failed to initialize virtual tunnel device")
+			tun.Close()
+			return -6 // FIXME
+		}
+		wrapper := NewRouter(tun, vtun)
+		entryDev = device.NewDevice(&wrapper, conn.NewStdNetBind(), logger)
+	} else {
+		entryDev = device.NewDevice(&singletun, conn.NewStdNetBind(), logger)
+	}
 
 	// refactoring unrolled for better mergeability, until the dust settles
 	// return addTunnelFromDevice(exitDev, entryDev, exitConfigString, entryConfigString, nil, logger, maybeNotMachines, maybeNotMaxEvents, maybeNotMaxActions)
@@ -300,7 +329,7 @@ func wgTurnOnMultihopInner(tun tun.Device, exitSettings *C.char, entrySettings *
 		tun.Close()
 		return errDeviceLimitHit
 	}
-	tunnelHandles[i] = tunnelHandle{exitDev, entryDev, logger, nil}
+	tunnelHandles[i] = tunnelHandle{exitDev, entryDev, logger, virtualNet}
 	return i
 }
 
@@ -423,13 +452,13 @@ func wgTurnOnIANFromExistingTunnel(tun tun.Device, settings string, privateAddr 
 	if err != nil {
 		logger.Errorf("Failed to initialize virtual tunnel device: %v", err)
 		tun.Close()
-		return -5
+		return -5 // FIXME
 	}
 
 	if virtualNet == nil {
 		logger.Errorf("Failed to initialize virtual tunnel device")
 		tun.Close()
-		return -6
+		return -6 // FIXME
 	}
 
 	wrapper := NewRouter(tun, vtun)
