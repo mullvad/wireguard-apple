@@ -593,7 +593,7 @@ public protocol ICMPPingProvider {
 
     func closeICMP()
 
-    func sendICMPPing(seqNumber: UInt16) throws -> Int32
+    @discardableResult func sendICMPPing(seqNumber: UInt16) throws -> Int32
 }
 
 extension WireGuardAdapter: ICMPPingProvider {
@@ -623,7 +623,7 @@ extension WireGuardAdapter: ICMPPingProvider {
         }
     }
 
-    public func sendICMPPing(seqNumber: UInt16) throws -> Int32 {
+    @discardableResult public func sendICMPPing(seqNumber: UInt16) throws -> Int32 {
         guard case .started(let tunnelHandle, _) = self.state, let icmpSocketHandle else {
             throw WireGuardAdapterError.icmpSocketNotOpen
         }
