@@ -30,7 +30,10 @@ public enum WireGuardAdapterError: Error {
     case noInterfaceIp
 
     /// The tunnel descriptor provided does not refer to an open tunnel
-    case invalidTunnel
+    case noSuchTunnel
+    
+    /// the tunnel exists, but does not have a virtual interface
+    case noTunnelVirtualInterface
 
     /// ICMP socket not open
     case icmpSocketNotOpen
@@ -608,7 +611,7 @@ extension WireGuardAdapter: ICMPPingProvider {
         if socket < 0 {
             switch socket {
             case -19: // errInvalidTunnel
-                throw WireGuardAdapterError.invalidTunnel
+                throw WireGuardAdapterError.noSuchTunnel
                 // this can currently only happen if we have 2^31 sockets, so if it happens, there's a bug somewhere
                 default: throw WireGuardAdapterError.internalError
             }
