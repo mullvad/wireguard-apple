@@ -527,27 +527,23 @@ func wgCloseInTunnelICMP(socketHandle int32) bool {
 	return ok
 }
 
-// the next sequence number to send in pings. We keep this global, though if there's a reason, we could put it in each opened socket structure
-var pingSeqNumber int = 1
-
 // this returns the sequence number or a negative value if an error occurred
 //
 //export wgSendAndAwaitInTunnelPing
-func wgSendAndAwaitInTunnelPing(tunnelHandle int32, socketHandle int32) int32 {
+func wgSendAndAwaitInTunnelPing(tunnelHandle int32, socketHandle int32, sequenceNumber uint16) int32 {
 	socket, ok := icmpHandles[socketHandle]
 	if !ok {
 		return errICMPOpenSocket
 	}
-	pingdata := []byte("cookie woz ere")
+	pingdata := []byte("MoleTunnel")
 	ping := icmp.Message{
 		Type: ipv4.ICMPTypeEcho,
 		Body: &icmp.Echo{
 			ID:   758,
-			Seq:  pingSeqNumber,
+			Seq:  int(sequenceNumber),
 			Data: pingdata,
 		},
 	}
-	defer func() { pingSeqNumber += 1 }()
 	pingBytes, err := ping.Marshal(nil)
 	(*(socket.icmpSocket)).SetReadDeadline(time.Now().Add(time.Second * 10))
 	_, err = (*(socket.icmpSocket)).Write(pingBytes)
@@ -567,10 +563,10 @@ func wgSendAndAwaitInTunnelPing(tunnelHandle int32, socketHandle int32) int32 {
 	if !ok {
 		return errICMPResponseFormat
 	}
-	if replyPing.Seq != pingSeqNumber || !bytes.Equal(replyPing.Data, pingdata) {
+	if replyPing.Seq != int(sequenceNumber) || !bytes.Equal(replyPing.Data, pingdata) {
 		return errICMPResponseContent
 	}
-	return int32(pingSeqNumber)
+	return int32(sequenceNumber)
 }
 
 //export wgVersion
