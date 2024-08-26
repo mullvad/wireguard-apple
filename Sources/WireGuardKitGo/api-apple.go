@@ -241,7 +241,7 @@ func parseFirstPubkeyFromConfig(config string) *device.NoisePublicKey {
 }
 
 func wgTurnOnMultihopInner(tun tun.Device, exitSettings *C.char, entrySettings *C.char, privateIp *C.char, exitMtu int, logger *device.Logger, maybeNotMachines *C.char, maybeNotMaxEvents uint32, maybeNotMaxActions uint32) int32 {
-	useIAN := true
+	useIAN := false
 	ip, err := netip.ParseAddr(C.GoString(privateIp))
 	if err != nil {
 		logger.Errorf("Failed to parse private IP: %v", err)
@@ -333,6 +333,83 @@ func wgTurnOnMultihopInner(tun tun.Device, exitSettings *C.char, entrySettings *
 	return i
 }
 
+func wgTurnOnMultihopInnerIAN(tun tun.Device, exitSettings *C.char, entrySettings *C.char, privateIp *C.char, exitMtu int, logger *device.Logger, maybeNotMachines *C.char, maybeNotMaxEvents uint32, maybeNotMaxActions uint32) int32 {
+	ip, err := netip.ParseAddr(C.GoString(privateIp))
+	if err != nil {
+		logger.Errorf("Failed to parse private IP: %v", err)
+		tun.Close()
+		return errBadIPString
+	}
+
+	exitConfigString := C.GoString(exitSettings)
+	entryConfigString := C.GoString(entrySettings)
+	exitEndpoint := parseEndpointFromConfig(exitConfigString)
+	if exitEndpoint == nil {
+		tun.Close()
+		return errNoEndpointInConfig
+	}
+
+	singletun := multihoptun.NewMultihopTun(ip, exitEndpoint.Addr(), exitEndpoint.Port(), exitMtu+80)
+
+	exitDev := device.NewDevice(tun, singletun.Binder(), logger)
+
+	vtun, virtualNet, err := netstack.CreateNetTUN([]netip.Addr{ip}, []netip.Addr{}, 1280)
+	if err != nil {
+		logger.Errorf("Failed to initialize virtual tunnel device: %v", err)
+		tun.Close()
+		return -5
+	}
+	if virtualNet == nil {
+		logger.Errorf("Failed to initialize virtual tunnel device")
+		tun.Close()
+		return -6 // FIXME
+	}
+	wrapper := NewRouter(&singletun, vtun)
+	entryDev := device.NewDevice(&wrapper, conn.NewStdNetBind(), logger)
+
+	// refactoring unrolled for better mergeability, until the dust settles
+	// return addTunnelFromDevice(exitDev, entryDev, exitConfigString, entryConfigString, nil, logger, maybeNotMachines, maybeNotMaxEvents, maybeNotMaxActions)
+	err = entryDev.IpcSet(entryConfigString)
+	if err != nil {
+		logger.Errorf("Unable to set IPC settings for entry: %v", err)
+		tun.Close()
+		return errBadWgConfig
+	}
+
+	err = exitDev.IpcSet(exitConfigString)
+	if err != nil {
+		logger.Errorf("Unable to set IPC settings for exit: %v", err)
+		tun.Close()
+		return errBadWgConfig
+	}
+
+	exitDev.Up()
+	entryDev.Up()
+
+	// Enable DAITA if DAITA parameters are passed through
+	if maybeNotMachines != nil {
+		returnValue := configureDaita(entryDev, entryConfigString, C.GoString(maybeNotMachines), maybeNotMaxEvents, maybeNotMaxActions)
+		if returnValue != 0 {
+			return returnValue
+		}
+	}
+
+	logger.Verbosef("Device started")
+
+	var i int32
+	for i = 0; i < math.MaxInt32; i++ {
+		if _, exists := tunnelHandles[i]; !exists {
+			break
+		}
+	}
+	if i == math.MaxInt32 {
+		tun.Close()
+		return errDeviceLimitHit
+	}
+	tunnelHandles[i] = tunnelHandle{exitDev, entryDev, logger, virtualNet}
+	return i
+}
+
 //export wgTurnOnMultihop
 func wgTurnOnMultihop(exitSettings *C.char, entrySettings *C.char, privateIp *C.char, tunFd int32, maybenotMachines *C.char, maybeNotMaxEvents uint32, maybeNotMaxActons uint32) int32 {
 	logger := &device.Logger{
@@ -370,7 +447,7 @@ func wgTurnOnMultihop(exitSettings *C.char, entrySettings *C.char, privateIp *C.
 		return errGetMtu
 	}
 
-	return wgTurnOnMultihopInner(tun, exitSettings, entrySettings, privateIp, exitMtu, logger, maybenotMachines, maybeNotMaxEvents, maybeNotMaxActons)
+	return wgTurnOnMultihopInnerIAN(tun, exitSettings, entrySettings, privateIp, exitMtu, logger, maybenotMachines, maybeNotMaxEvents, maybeNotMaxActons)
 }
 
 //export wgTurnOn
