@@ -331,12 +331,12 @@ func wgTurnOnMultihopInnerIAN(tun tun.Device, exitSettings *C.char, entrySetting
 	if err != nil {
 		logger.Errorf("Failed to initialize virtual tunnel device: %v", err)
 		tun.Close()
-		return -5
+		return errCreateVirtualTun
 	}
 	if virtualNet == nil {
 		logger.Errorf("Failed to initialize virtual tunnel device")
 		tun.Close()
-		return -6 // FIXME
+		return errNoVirtualNet
 	}
 	wrapper := NewRouter(tun, vtun)
 	exitDev := device.NewDevice(&wrapper, singletun.Binder(), logger)
@@ -438,20 +438,20 @@ func wgTurnOn(settings *C.char, tunFd int32, maybeNotMachines *C.char, maybeNotM
 	dupTunFd, err := unix.Dup(int(tunFd))
 	if err != nil {
 		logger.Errorf("Unable to dup tun fd: %v", err)
-		return -1
+		return errDup
 	}
 
 	err = unix.SetNonblock(dupTunFd, true)
 	if err != nil {
 		logger.Errorf("Unable to set tun fd as non blocking: %v", err)
 		unix.Close(dupTunFd)
-		return -1
+		return errSetNonblock
 	}
 	tun, err := tun.CreateTUNFromFile(os.NewFile(uintptr(dupTunFd), "/dev/tun"), 0)
 	if err != nil {
 		logger.Errorf("Unable to create new tun device from fd: %v", err)
 		unix.Close(dupTunFd)
-		return -1
+		return errCreateTun
 	}
 
 	logger.Verbosef("Attaching to interface")
@@ -464,7 +464,7 @@ func wgTurnOn(settings *C.char, tunFd int32, maybeNotMachines *C.char, maybeNotM
 	if err != nil {
 		logger.Errorf("Unable to set IPC settings: %v", err)
 		unix.Close(dupTunFd)
-		return -1
+		return errBadWgConfig
 	}
 
 	dev.Up()
@@ -486,7 +486,7 @@ func wgTurnOn(settings *C.char, tunFd int32, maybeNotMachines *C.char, maybeNotM
 	}
 	if i == math.MaxInt32 {
 		unix.Close(dupTunFd)
-		return -1
+		return errDeviceLimitHit
 	}
 	tunnelHandles[i] = tunnelHandle{dev, nil, logger, nil}
 	return i
@@ -503,13 +503,13 @@ func wgTurnOnIANFromExistingTunnel(tun tun.Device, settings string, privateAddr 
 	if err != nil {
 		logger.Errorf("Failed to initialize virtual tunnel device: %v", err)
 		tun.Close()
-		return -5 // FIXME
+		return errCreateVirtualTun
 	}
 
 	if virtualNet == nil {
 		logger.Errorf("Failed to initialize virtual tunnel device")
 		tun.Close()
-		return -6 // FIXME
+		return errNoVirtualNet
 	}
 
 	wrapper := NewRouter(tun, vtun)
@@ -530,7 +530,7 @@ func wgTurnOnIAN(settings *C.char, tunFd int32, privateIP *C.char, maybeNotMachi
 	privateAddr, err := netip.ParseAddr(privateAddrStr)
 	if err != nil {
 		logger.Errorf("Invalid address: %s", privateAddrStr)
-		return -1
+		return errBadIPString
 	}
 
 	tun, errCode := openTUNFromSocket(tunFd, logger)
