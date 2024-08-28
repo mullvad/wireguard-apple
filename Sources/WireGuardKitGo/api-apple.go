@@ -325,8 +325,7 @@ func wgTurnOnMultihopInnerIAN(tun tun.Device, exitSettings *C.char, entrySetting
 	}
 
 	singletun := multihoptun.NewMultihopTun(ip, exitEndpoint.Addr(), exitEndpoint.Port(), exitMtu+80)
-
-	exitDev := device.NewDevice(tun, singletun.Binder(), logger)
+	entryDev := device.NewDevice(&singletun, conn.NewStdNetBind(), logger)
 
 	vtun, virtualNet, err := netstack.CreateNetTUN([]netip.Addr{ip}, []netip.Addr{}, 1280)
 	if err != nil {
@@ -339,8 +338,8 @@ func wgTurnOnMultihopInnerIAN(tun tun.Device, exitSettings *C.char, entrySetting
 		tun.Close()
 		return -6 // FIXME
 	}
-	wrapper := NewRouter(&singletun, vtun)
-	entryDev := device.NewDevice(&wrapper, conn.NewStdNetBind(), logger)
+	wrapper := NewRouter(tun, vtun)
+	exitDev := device.NewDevice(&wrapper, singletun.Binder(), logger)
 
 	// refactoring unrolled for better mergeability, until the dust settles
 	// return addTunnelFromDevice(exitDev, entryDev, exitConfigString, entryConfigString, nil, logger, maybeNotMachines, maybeNotMaxEvents, maybeNotMaxActions)
