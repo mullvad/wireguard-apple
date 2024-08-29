@@ -39,7 +39,7 @@ public enum WireGuardAdapterError: Error {
     case icmpSocketNotOpen
 
     /// internal error
-    case internalError
+    case internalError(Int32)
 }
 
 /// Enum representing internal state of the `WireGuardAdapter`
@@ -613,7 +613,7 @@ extension WireGuardAdapter: ICMPPingProvider {
             case -19: // errInvalidTunnel
                 throw WireGuardAdapterError.noSuchTunnel
                 // this can currently only happen if we have 2^31 sockets, so if it happens, there's a bug somewhere
-                default: throw WireGuardAdapterError.internalError
+                default: throw WireGuardAdapterError.internalError(socket)
             }
         }
         self.icmpSocketHandle = socket
@@ -636,7 +636,7 @@ extension WireGuardAdapter: ICMPPingProvider {
         case -14: // errICMPOpenSocket
             throw WireGuardAdapterError.icmpSocketNotOpen
             // TODO: more fine-grained errors
-            default: throw WireGuardAdapterError.internalError
+            default: throw WireGuardAdapterError.internalError(seq)
         }
     }
 }
