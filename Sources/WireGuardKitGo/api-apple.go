@@ -740,13 +740,15 @@ func wgSendAndAwaitInTunnelPing(tunnelHandle int32, socketHandle int32, sequence
 		},
 	}
 	pingBytes, err := ping.Marshal(nil)
-	(*(socket.icmpSocket)).SetReadDeadline(time.Now().Add(time.Second * 10))
+	// FIXME: temporarily disabled for diagnostic purposes
+	// (*(socket.icmpSocket)).SetReadDeadline(time.Now().Add(time.Second * 10))
 	_, err = (*(socket.icmpSocket)).Write(pingBytes)
 	if err != nil {
 		return errICMPWriteSocket
 	}
 	readBuff := make([]byte, 1024)
 	readBytes, err := (*(socket.icmpSocket)).Read(readBuff)
+	// it appears to be failing here sometimes in the app
 	if readBytes <= 0 || err != nil {
 		return errICMPReadSocket
 	}
