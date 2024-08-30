@@ -458,11 +458,12 @@ public class WireGuardAdapter {
         var entry: DeviceConfiguration? = nil
         if let entryConfiguration {
             let resolvedEntryEndpoints = try self.resolvePeers(for: entryConfiguration)
-            entry = DeviceConfiguration(configuration: entryConfiguration, resolvedEndpoints: resolvedEntryEndpoints)
+            entry = DeviceConfiguration(configuration: entryConfiguration, resolvedEndpoints: resolvedEntryEndpoints, reResolveEndpoint: true)
         }
         
+        // Disable NAT64 resolution for exit relays when multihop is enabled
         return PacketTunnelSettingsGenerator(
-            exit: DeviceConfiguration(configuration: exitConfiguration, resolvedEndpoints: resolvedExitEndpoints),
+            exit: DeviceConfiguration(configuration: exitConfiguration, resolvedEndpoints: resolvedExitEndpoints, reResolveEndpoint: entry == nil),
             entry: entry,
             daita: daita
         )
