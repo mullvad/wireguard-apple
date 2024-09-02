@@ -16,6 +16,9 @@ struct DeviceConfiguration {
     let configuration: TunnelConfiguration
     let resolvedEndpoints: [Endpoint?]
 
+    /// Whether the endpoint should be re-resolved via DNS64
+    let reResolveEndpoint: Bool
+
     func generateNetworkSettings() -> NEPacketTunnelNetworkSettings {
         /* iOS requires a tunnel endpoint, whereas in WireGuard it's valid for
          * a tunnel to have no endpoint, or for there to be many endpoints, in
@@ -77,12 +80,22 @@ struct DeviceConfiguration {
         for (peer, resolvedEndpoint) in zip(self.configuration.peers, self.resolvedEndpoints) {
             wgSettings.append("public_key=\(peer.publicKey.hexKey)\n")
 
-            let result = resolvedEndpoint.map(PacketTunnelSettingsGenerator.reresolveEndpoint)
-            if case .success((_, let resolvedEndpoint)) = result {
-                if case .name = resolvedEndpoint.host { assert(false, "Endpoint is not resolved") }
-                wgSettings.append("endpoint=\(resolvedEndpoint.stringRepresentation)\n")
+            // The Mullvad iOS client does not currently support connecting to relays with an IPv6 address.
+            // Certain clients using NAT64 will try to re-resolve the exit IP of an exit relay to get an IPv6 address in a multihop scenario.
+            // This will make iOS generate a synthetic IPv6 address that is bogus.
+            // The solution is to disable IP re-resolution for exit relays in a multihop scenario.
+            if reResolveEndpoint {
+                let result = resolvedEndpoint.map(PacketTunnelSettingsGenerator.reresolveEndpoint)
+                if case .success((_, let resolvedEndpoint)) = result {
+                    if case .name = resolvedEndpoint.host { assert(false, "Endpoint is not resolved") }
+                    wgSettings.append("endpoint=\(resolvedEndpoint.stringRepresentation)\n")
+                }
+                resolutionResults.append(result)
+            } else {
+                resolvedEndpoint.map {
+                    wgSettings.append("endpoint=\($0.stringRepresentation)\n")
+                }
             }
-            resolutionResults.append(result)
         }
 
         return (wgSettings, resolutionResults)
@@ -178,12 +191,18 @@ class PacketTunnelSettingsGenerator {
                 wgSettings.append("preshared_key=\(preSharedKey)\n")
             }
 
-            let result = resolvedEndpoint.map(Self.reresolveEndpoint)
-            if case .success((_, let resolvedEndpoint)) = result {
-                if case .name = resolvedEndpoint.host { assert(false, "Endpoint is not resolved") }
-                wgSettings.append("endpoint=\(resolvedEndpoint.stringRepresentation)\n")
+            if device.reResolveEndpoint {
+                let result = resolvedEndpoint.map(Self.reresolveEndpoint)
+                if case .success((_, let resolvedEndpoint)) = result {
+                    if case .name = resolvedEndpoint.host { assert(false, "Endpoint is not resolved") }
+                    wgSettings.append("endpoint=\(resolvedEndpoint.stringRepresentation)\n")
+                }
+                resolutionResults.append(result)
+            } else {
+                resolvedEndpoint.map {
+                    wgSettings.append("endpoint=\($0.stringRepresentation)\n")
+                }
             }
-            resolutionResults.append(result)
 
             let persistentKeepAlive = peer.persistentKeepAlive ?? 0
             wgSettings.append("persistent_keepalive_interval=\(persistentKeepAlive)\n")
