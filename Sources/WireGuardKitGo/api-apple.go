@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"math/rand"
 	"net"
 	"net/netip"
 	"os"
@@ -101,6 +102,8 @@ type tunnelHandle struct {
 var tunnelHandles = make(map[int32]tunnelHandle)
 
 type HandleList[T interface{}] map[int32]T
+
+var rng = rand.New(rand.NewSource(time.Now().UnixNano()))
 
 // insert a value and return the positive handle, or errDeviceLimitHit if full
 func insertHandle[T interface{}](hl map[int32]T, value T) int32 {
@@ -730,11 +733,15 @@ func wgSendAndAwaitInTunnelPing(tunnelHandle int32, socketHandle int32, sequence
 	if !ok {
 		return errICMPOpenSocket
 	}
-	pingdata := []byte("MoleTunnel")
+	dataLength := 16
+	pingdata := make([]byte, dataLength)
+	_, err := rng.Read(pingdata)
+	pingid := rng.Int()
+	// probably not worth checking for an error here
 	ping := icmp.Message{
 		Type: ipv4.ICMPTypeEcho,
 		Body: &icmp.Echo{
-			ID:   758,
+			ID:   pingid,
 			Seq:  int(sequenceNumber),
 			Data: pingdata,
 		},
@@ -760,7 +767,7 @@ func wgSendAndAwaitInTunnelPing(tunnelHandle int32, socketHandle int32, sequence
 	if !ok {
 		return errICMPResponseFormat
 	}
-	if replyPing.Seq != int(sequenceNumber) || !bytes.Equal(replyPing.Data, pingdata) {
+	if replyPing.Seq != int(sequenceNumber) || replyPing.ID != pingid || !bytes.Equal(replyPing.Data, pingdata) {
 		return errICMPResponseContent
 	}
 	return int32(sequenceNumber)
