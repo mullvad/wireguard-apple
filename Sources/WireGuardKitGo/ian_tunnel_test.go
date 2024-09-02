@@ -165,7 +165,7 @@ func TestUDPReplicatePipe(t *testing.T) {
 	aConfig := configs[0] + endpointConfigs[0]
 	bConfig := configs[1] + endpointConfigs[1]
 
-	tunnel := wgTurnOnIANFromExistingTunnel(a, aConfig, aIp)
+	tunnel := wgTurnOnIANFromExistingTunnel(a, aConfig, aIp, nil, 0, 0)
 
 	bDev := device.NewDevice(b, conn.NewStdNetBind(), device.NewLogger(device.LogLevelSilent, ""))
 
@@ -231,7 +231,7 @@ func TestUDPPipe(t *testing.T) {
 	configs, endpointConfigs := genConfigs(t)
 	aConfig := configs[0] + endpointConfigs[0]
 	bConfig := configs[1] + endpointConfigs[1]
-	tunnel := wgTurnOnIANFromExistingTunnel(a, aConfig, aIp)
+	tunnel := wgTurnOnIANFromExistingTunnel(a, aConfig, aIp, nil, 0, 0)
 	bDev.IpcSet(bConfig)
 	bDev.Up()
 
@@ -388,7 +388,7 @@ func TestPing(t *testing.T) {
 	aConfig := configs[0] + endpointConfigs[0]
 	bConfig := configs[1] + endpointConfigs[1]
 
-	tunnel := wgTurnOnIANFromExistingTunnel(a, aConfig, aIp)
+	tunnel := wgTurnOnIANFromExistingTunnel(a, aConfig, aIp, nil, 0, 0)
 
 	bDev := device.NewDevice(b, conn.NewStdNetBind(), device.NewLogger(device.LogLevelSilent, ""))
 
@@ -398,7 +398,7 @@ func TestPing(t *testing.T) {
 
 	pinger := wgOpenInTunnelICMP(tunnel, cstring("1.2.3.5"))
 
-	result := wgSendAndAwaitInTunnelPing(tunnel, pinger)
+	result := wgSendAndAwaitInTunnelPing(tunnel, pinger, 1)
 
 	assert.Equal(t, result, int32(0))
 

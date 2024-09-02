@@ -767,7 +767,7 @@ func wgSendAndAwaitInTunnelPing(tunnelHandle int32, socketHandle int32, sequence
 	if !ok {
 		return errICMPResponseFormat
 	}
-	if replyPing.Seq != int(sequenceNumber) || replyPing.ID != pingid || !bytes.Equal(replyPing.Data, pingdata) {
+	if replyPing.Seq != int(sequenceNumber) || !bytes.Equal(replyPing.Data, pingdata) {
 		return errICMPResponseContent
 	}
 	return int32(sequenceNumber)
