@@ -17,7 +17,8 @@ import (
 	"bufio"
 	"encoding/hex"
 	"fmt"
-	"math"
+	"math/rand"
+	"net"
 	"net/netip"
 	"os"
 	"os/signal"
@@ -53,6 +54,17 @@ const (
 	errNoPeer
 	// Failed to enable DAITA
 	errEnableDaita
+	// ICMP errors
+	errICMPOpenSocket
+	errICMPWriteSocket
+	errICMPReadSocket
+	errICMPResponseFormat
+	errICMPResponseContent
+	// no such tunnel exists
+	errNoSuchTunnel
+	// tunnel does not have virtual interface
+	errNoTunnelVirtualInterface
+	errICMPTimeout
 )
 
 var loggerFunc unsafe.Pointer
@@ -83,7 +95,15 @@ type tunnelHandle struct {
 	virtualNet *netstack.Net
 }
 
+type icmpHandle struct {
+	tunnelHandle int32
+	icmpSocket   *net.Conn
+}
+
 var tunnelHandles = make(map[int32]tunnelHandle)
+var icmpHandles = make(map[int32]icmpHandle)
+
+var rng = rand.New(rand.NewSource(time.Now().UnixNano()))
 
 func init() {
 	signals := make(chan os.Signal)
@@ -109,6 +129,88 @@ func wgSetLogger(context, loggerFn uintptr) {
 	loggerFunc = unsafe.Pointer(loggerFn)
 }
 
+func openTUNFromSocket(tunFd int32, logger *device.Logger) (tun.Device, int32) {
+
+	dupTunFd, err := unix.Dup(int(tunFd))
+	if err != nil {
+		logger.Errorf("Unable to dup tun fd: %v", err)
+		return nil, errDup
+	}
+
+	err = unix.SetNonblock(dupTunFd, true)
+	if err != nil {
+		logger.Errorf("Unable to set tun fd as non blocking: %v", err)
+		unix.Close(dupTunFd)
+		return nil, errSetNonblock
+	}
+	tun, err := tun.CreateTUNFromFile(os.NewFile(uintptr(dupTunFd), "/dev/tun"), 0)
+	if err != nil {
+		logger.Errorf("Unable to create new tun device from fd: %v", err)
+		unix.Close(dupTunFd)
+		return nil, errCreateTun
+	}
+
+	return tun, 0
+}
+
+func bringUpDevice(dev *device.Device, settings string, logger *device.Logger) error {
+	err := dev.IpcSet(settings)
+	if err != nil {
+		logger.Errorf("Unable to set IPC settings: %v", err)
+		dev.Close()
+		return err
+	}
+
+	dev.Up()
+	logger.Verbosef("Device started")
+	return nil
+}
+
+func addTunnelFromDevice(dev *device.Device, entryDev *device.Device, settings string, entrySettings string, virtualNet *netstack.Net, logger *device.Logger, maybeNotMachines *C.char, maybeNotMaxEvents uint32, maybeNotMaxActions uint32) int32 {
+	err := bringUpDevice(dev, settings, logger)
+	if err != nil {
+		return errBadWgConfig
+	}
+
+	if entryDev != nil {
+		err = bringUpDevice(entryDev, entrySettings, logger)
+		if err != nil {
+			dev.Close()
+			return errBadWgConfig
+		}
+	}
+
+	// Enable DAITA if DAITA parameters are passed through
+	if maybeNotMachines != nil {
+		returnValue := configureDaita(entryDev, entrySettings, C.GoString(maybeNotMachines), maybeNotMaxEvents, maybeNotMaxActions)
+		if returnValue != 0 {
+			return returnValue
+		}
+	}
+
+	return insertHandle(tunnelHandles, tunnelHandle{dev, entryDev, logger, virtualNet})
+}
+
+func parseFirstPubkeyFromConfig(config string) *device.NoisePublicKey {
+	scanner := bufio.NewScanner(strings.NewReader(config))
+	for scanner.Scan() {
+		line := scanner.Text()
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+
+		if key == "public_key" {
+			pubkey, err := hex.DecodeString(value)
+			if err == nil {
+				key := device.NoisePublicKey(pubkey)
+				return &key
+			}
+		}
+	}
+	return nil
+}
+
 func wgTurnOnMultihopInner(tun tun.Device, exitSettings *C.char, entrySettings *C.char, privateIp *C.char, exitMtu int, logger *device.Logger, maybeNotMachines *C.char, maybeNotMaxEvents uint32, maybeNotMaxActions uint32) int32 {
 	ip, err := netip.ParseAddr(C.GoString(privateIp))
 	if err != nil {
@@ -118,6 +220,7 @@ func wgTurnOnMultihopInner(tun tun.Device, exitSettings *C.char, entrySettings *
 	}
 
 	exitConfigString := C.GoString(exitSettings)
+	entryConfigString := C.GoString(entrySettings)
 	exitEndpoint := parseEndpointFromConfig(exitConfigString)
 	if exitEndpoint == nil {
 		tun.Close()
@@ -126,11 +229,15 @@ func wgTurnOnMultihopInner(tun tun.Device, exitSettings *C.char, entrySettings *
 
 	singletun := multihoptun.NewMultihopTun(ip, exitEndpoint.Addr(), exitEndpoint.Port(), exitMtu+80)
 
+	// var entryTun tun.Device
+	var entryDev *device.Device
+	var virtualNet *netstack.Net
+
+	entryDev = device.NewDevice(&singletun, conn.NewStdNetBind(), logger)
 	exitDev := device.NewDevice(tun, singletun.Binder(), logger)
-	entryDev := device.NewDevice(&singletun, conn.NewStdNetBind(), logger)
 
-	entryConfigString := C.GoString(entrySettings)
-
+	// refactoring unrolled for better mergeability, until the dust settles
+	// return addTunnelFromDevice(exitDev, entryDev, exitConfigString, entryConfigString, nil, logger, maybeNotMachines, maybeNotMaxEvents, maybeNotMaxActions)
 	err = entryDev.IpcSet(entryConfigString)
 	if err != nil {
 		logger.Errorf("Unable to set IPC settings for entry: %v", err)
@@ -158,38 +265,72 @@ func wgTurnOnMultihopInner(tun tun.Device, exitSettings *C.char, entrySettings *
 
 	logger.Verbosef("Device started")
 
-	var i int32
-	for i = 0; i < math.MaxInt32; i++ {
-		if _, exists := tunnelHandles[i]; !exists {
-			break
-		}
-	}
-	if i == math.MaxInt32 {
-		tun.Close()
-		return errDeviceLimitHit
-	}
-	tunnelHandles[i] = tunnelHandle{exitDev, entryDev, logger, nil}
-	return i
+	return insertHandle(tunnelHandles, tunnelHandle{exitDev, entryDev, logger, virtualNet})
 }
 
-func parseFirstPubkeyFromConfig(config string) *device.NoisePublicKey {
-	scanner := bufio.NewScanner(strings.NewReader(config))
-	for scanner.Scan() {
-		line := scanner.Text()
-		key, value, ok := strings.Cut(line, "=")
-		if !ok {
-			continue
-		}
+func wgTurnOnMultihopInnerIAN(tun tun.Device, exitSettings *C.char, entrySettings *C.char, privateIp *C.char, exitMtu int, logger *device.Logger, maybeNotMachines *C.char, maybeNotMaxEvents uint32, maybeNotMaxActions uint32) int32 {
+	ip, err := netip.ParseAddr(C.GoString(privateIp))
+	if err != nil {
+		logger.Errorf("Failed to parse private IP: %v", err)
+		tun.Close()
+		return errBadIPString
+	}
 
-		if key == "public_key" {
-			pubkey, err := hex.DecodeString(value)
-			if err == nil {
-				key := device.NoisePublicKey(pubkey)
-				return &key
-			}
+	exitConfigString := C.GoString(exitSettings)
+	entryConfigString := C.GoString(entrySettings)
+	exitEndpoint := parseEndpointFromConfig(exitConfigString)
+	if exitEndpoint == nil {
+		tun.Close()
+		return errNoEndpointInConfig
+	}
+
+	singletun := multihoptun.NewMultihopTun(ip, exitEndpoint.Addr(), exitEndpoint.Port(), exitMtu+80)
+	entryDev := device.NewDevice(&singletun, conn.NewStdNetBind(), logger)
+
+	vtun, virtualNet, err := netstack.CreateNetTUN([]netip.Addr{ip}, []netip.Addr{}, 1280)
+	if err != nil {
+		logger.Errorf("Failed to initialize virtual tunnel device: %v", err)
+		tun.Close()
+		return errCreateVirtualTun
+	}
+	if virtualNet == nil {
+		logger.Errorf("Failed to initialize virtual tunnel device")
+		tun.Close()
+		return errNoVirtualNet
+	}
+	wrapper := NewRouter(tun, vtun)
+	exitDev := device.NewDevice(&wrapper, singletun.Binder(), logger)
+
+	// refactoring unrolled for better mergeability, until the dust settles
+	// return addTunnelFromDevice(exitDev, entryDev, exitConfigString, entryConfigString, nil, logger, maybeNotMachines, maybeNotMaxEvents, maybeNotMaxActions)
+	err = entryDev.IpcSet(entryConfigString)
+	if err != nil {
+		logger.Errorf("Unable to set IPC settings for entry: %v", err)
+		tun.Close()
+		return errBadWgConfig
+	}
+
+	err = exitDev.IpcSet(exitConfigString)
+	if err != nil {
+		logger.Errorf("Unable to set IPC settings for exit: %v", err)
+		tun.Close()
+		return errBadWgConfig
+	}
+
+	exitDev.Up()
+	entryDev.Up()
+
+	// Enable DAITA if DAITA parameters are passed through
+	if maybeNotMachines != nil {
+		returnValue := configureDaita(entryDev, entryConfigString, C.GoString(maybeNotMachines), maybeNotMaxEvents, maybeNotMaxActions)
+		if returnValue != 0 {
+			return returnValue
 		}
 	}
-	return nil
+
+	logger.Verbosef("Device started")
+
+	return insertHandle(tunnelHandles, tunnelHandle{exitDev, entryDev, logger, virtualNet})
 }
 
 //export wgTurnOnMultihop
@@ -199,6 +340,11 @@ func wgTurnOnMultihop(exitSettings *C.char, entrySettings *C.char, privateIp *C.
 		Errorf:   CLogger(1).Printf,
 	}
 
+	// refactoring unrolled for better mergeability, until the dust settles
+	// tun, errCode := openTUNFromSocket(tunFd, logger)
+	// if tun == nil {
+	// 	return errCode
+	// }
 	dupTunFd, err := unix.Dup(int(tunFd))
 	if err != nil {
 		logger.Errorf("Unable to dup tun fd: %v", err)
@@ -224,8 +370,7 @@ func wgTurnOnMultihop(exitSettings *C.char, entrySettings *C.char, privateIp *C.
 		return errGetMtu
 	}
 
-	return wgTurnOnMultihopInner(tun, exitSettings, entrySettings, privateIp, exitMtu, logger, maybenotMachines, maybeNotMaxEvents, maybeNotMaxActons)
-
+	return wgTurnOnMultihopInnerIAN(tun, exitSettings, entrySettings, privateIp, exitMtu, logger, maybenotMachines, maybeNotMaxEvents, maybeNotMaxActons)
 }
 
 //export wgTurnOn
@@ -234,74 +379,11 @@ func wgTurnOn(settings *C.char, tunFd int32, maybeNotMachines *C.char, maybeNotM
 		Verbosef: CLogger(0).Printf,
 		Errorf:   CLogger(1).Printf,
 	}
-	dupTunFd, err := unix.Dup(int(tunFd))
-	if err != nil {
-		logger.Errorf("Unable to dup tun fd: %v", err)
-		return -1
-	}
-
-	err = unix.SetNonblock(dupTunFd, true)
-	if err != nil {
-		logger.Errorf("Unable to set tun fd as non blocking: %v", err)
-		unix.Close(dupTunFd)
-		return -1
-	}
-	tun, err := tun.CreateTUNFromFile(os.NewFile(uintptr(dupTunFd), "/dev/tun"), 0)
-	if err != nil {
-		logger.Errorf("Unable to create new tun device from fd: %v", err)
-		unix.Close(dupTunFd)
-		return -1
-	}
-	logger.Verbosef("Attaching to interface")
-	dev := device.NewDevice(tun, conn.NewStdNetBind(), logger)
-
-	settingsString := C.GoString(settings)
-	err = dev.IpcSet(C.GoString(settings))
-	if err != nil {
-		logger.Errorf("Unable to set IPC settings: %v", err)
-		unix.Close(dupTunFd)
-		return -1
-	}
-
-	dev.Up()
-	logger.Verbosef("Device started")
-
-	// Enable DAITA if DAITA parameters are passed through
-	if maybeNotMachines != nil {
-		returnValue := configureDaita(dev, settingsString, C.GoString(maybeNotMachines), maybeNotMaxEvents, maybeNotMaxActions)
-		if returnValue != 0 {
-			return returnValue
-		}
-	}
-
-	var i int32
-	for i = 1; i < math.MaxInt32; i++ {
-		if _, exists := tunnelHandles[i]; !exists {
-			break
-		}
-	}
-	if i == math.MaxInt32 {
-		unix.Close(dupTunFd)
-		return -1
-	}
-	tunnelHandles[i] = tunnelHandle{dev, nil, logger, nil}
-	return i
-}
-
-//export wgTurnOnIAN
-func wgTurnOnIAN(settings *C.char, tunFd int32, privateIP *C.char) int32 {
-	logger := &device.Logger{
-		Verbosef: CLogger(0).Printf,
-		Errorf:   CLogger(1).Printf,
-	}
-
-	privateAddrStr := C.GoString(privateIP)
-	privateAddr, err := netip.ParseAddr(privateAddrStr)
-	if err != nil {
-		logger.Errorf("Invalid address: %s", privateAddrStr)
-		return errBadIPString
-	}
-
+	// refactoring unrolled for better mergeability, until the dust settles
+	// tun, errCode := openTUNFromSocket(tunFd, logger)
+	// if tun == nil {
+	// 	return errCode
+	// }
 	dupTunFd, err := unix.Dup(int(tunFd))
 	if err != nil {
 		logger.Errorf("Unable to dup tun fd: %v", err)
@@ -320,9 +402,42 @@ func wgTurnOnIAN(settings *C.char, tunFd int32, privateIP *C.char) int32 {
 		unix.Close(dupTunFd)
 		return errCreateTun
 	}
+
+	logger.Verbosef("Attaching to interface")
+	dev := device.NewDevice(tun, conn.NewStdNetBind(), logger)
+
+	// refactoring unrolled for better mergeability, until the dust settles
+	// return addTunnelFromDevice(dev, nil, C.GoString(settings), "", nil, logger, maybeNotMachines, maybeNotMaxEvents, maybeNotMaxActions)
+	settingsString := C.GoString(settings)
+	err = dev.IpcSet(C.GoString(settings))
+	if err != nil {
+		logger.Errorf("Unable to set IPC settings: %v", err)
+		unix.Close(dupTunFd)
+		return errBadWgConfig
+	}
+
+	dev.Up()
+	logger.Verbosef("Device started")
+
+	// Enable DAITA if DAITA parameters are passed through
+	if maybeNotMachines != nil {
+		returnValue := configureDaita(dev, settingsString, C.GoString(maybeNotMachines), maybeNotMaxEvents, maybeNotMaxActions)
+		if returnValue != 0 {
+			return returnValue
+		}
+	}
+
+	return insertHandle(tunnelHandles, tunnelHandle{dev, nil, logger, nil})
+}
+
+func wgTurnOnIANFromExistingTunnel(tun tun.Device, settings string, privateAddr netip.Addr, maybeNotMachines *C.char, maybeNotMaxEvents uint32, maybeNotMaxActions uint32) int32 {
+	logger := &device.Logger{
+		Verbosef: CLogger(0).Printf,
+		Errorf:   CLogger(1).Printf,
+	}
+
 	/// assign the same private IPs associated with your key
 	vtun, virtualNet, err := netstack.CreateNetTUN([]netip.Addr{privateAddr}, []netip.Addr{}, 1280)
-
 	if err != nil {
 		logger.Errorf("Failed to initialize virtual tunnel device: %v", err)
 		tun.Close()
@@ -339,29 +454,29 @@ func wgTurnOnIAN(settings *C.char, tunFd int32, privateIP *C.char) int32 {
 	logger.Verbosef("Attaching to interface")
 	dev := device.NewDevice(&wrapper, conn.NewStdNetBind(), logger)
 
-	err = dev.IpcSet(C.GoString(settings))
+	return addTunnelFromDevice(dev, nil, settings, "", virtualNet, logger, maybeNotMachines, maybeNotMaxEvents, maybeNotMaxActions) // FIXME
+}
+
+//export wgTurnOnIAN
+func wgTurnOnIAN(settings *C.char, tunFd int32, privateIP *C.char, maybeNotMachines *C.char, maybeNotMaxEvents uint32, maybeNotMaxActions uint32) int32 {
+	logger := &device.Logger{
+		Verbosef: CLogger(0).Printf,
+		Errorf:   CLogger(1).Printf,
+	}
+
+	privateAddrStr := C.GoString(privateIP)
+	privateAddr, err := netip.ParseAddr(privateAddrStr)
 	if err != nil {
-		logger.Errorf("Unable to set IPC settings: %v", err)
-		dev.Close()
-		return errBadWgConfig
+		logger.Errorf("Invalid address: %s", privateAddrStr)
+		return errBadIPString
 	}
 
-	dev.Up()
-	logger.Verbosef("Device started")
+	tun, errCode := openTUNFromSocket(tunFd, logger)
+	if tun == nil {
+		return errCode
+	}
 
-	var i int32
-	for i = 0; i < math.MaxInt32; i++ {
-		if _, exists := tunnelHandles[i]; !exists {
-			break
-		}
-	}
-	if i == math.MaxInt32 {
-		dev.Close()
-		return errDeviceLimitHit
-	}
-	tunnelHandles[i] = tunnelHandle{dev, nil, logger, virtualNet}
-	// TODO: add a tunnel handle, or otherwise make sure we can create connections in the tunnel
-	return i
+	return wgTurnOnIANFromExistingTunnel(tun, C.GoString(settings), privateAddr, maybeNotMachines, maybeNotMaxEvents, maybeNotMaxActions)
 }
 
 //export wgTurnOff
@@ -369,6 +484,11 @@ func wgTurnOff(tunnelHandle int32) {
 	handle, ok := tunnelHandles[tunnelHandle]
 	if !ok {
 		return
+	}
+	for icmpHandle, icmpData := range icmpHandles {
+		if icmpData.tunnelHandle == tunnelHandle {
+			wgCloseInTunnelICMP(icmpHandle)
+		}
 	}
 	delete(tunnelHandles, tunnelHandle)
 
@@ -488,7 +608,7 @@ func configureDaita(device *device.Device, config string, machines string, maxEv
 func main() {}
 
 // Parse a wireguard config and return the first endpoint address it finds and
-// parses successfully.
+// parses successfully.gi b
 func parseEndpointFromConfig(config string) *netip.AddrPort {
 	scanner := bufio.NewScanner(strings.NewReader(config))
 	for scanner.Scan() {
