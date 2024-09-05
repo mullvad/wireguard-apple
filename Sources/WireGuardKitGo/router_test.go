@@ -242,6 +242,7 @@ func _TestGoroutineLeaks(t *testing.T) {
 	aDev.Close()
 }
 
+
 func setUpRouterDevices(t testing.TB) (*netstack.Net, *netstack.Net, *device.Device, *netstack.Net, *device.Device) {
 	a, aNet, _ := netstack.CreateNetTUN([]netip.Addr{aIp}, []netip.Addr{}, 1420)
 	aVirtual, aNetV, _ := netstack.CreateNetTUN([]netip.Addr{aIp}, []netip.Addr{}, 1420)
