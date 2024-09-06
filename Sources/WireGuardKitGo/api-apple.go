@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"encoding/hex"
 	"fmt"
-	"io"
 	"math"
 	"math/rand"
 	"net"
@@ -625,76 +624,6 @@ func wgDisableSomeRoamingForBrokenMobileSemantics(tunnelHandle int32) {
 	if dev.entry != nil {
 		dev.entry.DisableSomeRoamingForBrokenMobileSemantics()
 	}
-}
-
-func testOpenInTunnelUDP(tunnelHandle int32, sendAddrPort, recvAddrPort netip.AddrPort) (*os.File, *os.File) {
-	handle, ok := tunnelHandles[tunnelHandle]
-	if !ok || handle.virtualNet == nil {
-		return nil, nil
-	}
-
-	sender, err := handle.virtualNet.DialUDPAddrPort(netip.AddrPort{}, sendAddrPort)
-	if err != nil {
-		fmt.Printf("Failed to open UDP socket for sending\n")
-		return nil, nil
-	}
-	listener, err := handle.virtualNet.ListenUDPAddrPort(recvAddrPort)
-	fmt.Printf("-- Listening on %v\n", recvAddrPort)
-	if err != nil {
-		return nil, nil
-	}
-	sendRx, sendTx, err := os.Pipe()
-	if err != nil {
-		return nil, nil
-	}
-	recvRx, recvTx, err := os.Pipe()
-	if err != nil {
-		sendTx.Close()
-		return nil, nil
-	}
-
-	rxShutdown := make(chan struct{})
-	sendbuf := make([]byte, 1024)
-	go func() { // the sender
-		defer sendRx.Close()
-		for {
-			select {
-			case _ = <-rxShutdown:
-				fmt.Printf("*** closing down")
-				return
-			default:
-			}
-			count, err := sendRx.Read(sendbuf)
-			if err == io.EOF {
-				rxShutdown <- struct{}{}
-			}
-			fmt.Printf("Sent %d bytes to connection\n", count)
-			sender.Write(sendbuf[:count])
-		}
-	}()
-	recvbuf := make([]byte, 1024)
-	go func() { // the receiver
-		defer func() {
-			fmt.Printf("Closing recvTx\n")
-			recvTx.Close()
-		}()
-		for {
-			select {
-			case _ = <-rxShutdown:
-				return
-			default:
-				fmt.Printf("Waiting to receive data\n")
-				count, _ := listener.Read(recvbuf)
-				// if err == io.EOF {
-				// 	rxShutdown <- struct{}{}
-				// }
-				fmt.Printf("Received %d bytes from connection\n", count)
-				recvTx.Write(recvbuf[:count])
-			}
-		}
-	}()
-	return sendTx, recvRx
-
 }
 
 //export wgOpenInTunnelICMP

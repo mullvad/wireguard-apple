@@ -609,7 +609,7 @@ extension WireGuardAdapter: ICMPPingProvider {
             throw WireGuardAdapterError.invalidState
         }
         // assumption: the description of an IPv4Address will always produce valid ASCII
-        let addrString = "\(address)".cString(using: .ascii)!
+        let addrString = "\(address)"
         let socket = wgOpenInTunnelICMP(tunnelHandle, addrString)
         if socket < 0 {
             switch socket {
