@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"encoding/hex"
 	"fmt"
-	"math"
 	"math/rand"
 	"net"
 	"net/netip"
@@ -98,33 +97,15 @@ type tunnelHandle struct {
 	virtualNet *netstack.Net
 }
 
-var tunnelHandles = make(map[int32]tunnelHandle)
-
-type HandleList[T interface{}] map[int32]T
-
-var rng = rand.New(rand.NewSource(time.Now().UnixNano()))
-
-// insert a value and return the positive handle, or errDeviceLimitHit if full
-func insertHandle[T interface{}](hl map[int32]T, value T) int32 {
-	var i int32
-	for i = 0; i < math.MaxInt32; i++ {
-		if _, exists := hl[i]; !exists {
-			break
-		}
-	}
-	if i == math.MaxInt32 {
-		return errDeviceLimitHit
-	}
-	hl[i] = value
-	return i
-}
-
 type icmpHandle struct {
 	tunnelHandle int32
 	icmpSocket   *net.Conn
 }
 
+var tunnelHandles = make(map[int32]tunnelHandle)
 var icmpHandles = make(map[int32]icmpHandle)
+
+var rng = rand.New(rand.NewSource(time.Now().UnixNano()))
 
 func init() {
 	signals := make(chan os.Signal)
@@ -209,18 +190,7 @@ func addTunnelFromDevice(dev *device.Device, entryDev *device.Device, settings s
 		}
 	}
 
-	var i int32
-	for i = 0; i < math.MaxInt32; i++ {
-		if _, exists := tunnelHandles[i]; !exists {
-			break
-		}
-	}
-	if i == math.MaxInt32 {
-		dev.Close()
-		return errDeviceLimitHit
-	}
-	tunnelHandles[i] = tunnelHandle{dev, entryDev, logger, virtualNet}
-	return i
+	return insertHandle(tunnelHandles, tunnelHandle{dev, entryDev, logger, virtualNet})
 }
 
 func parseFirstPubkeyFromConfig(config string) *device.NoisePublicKey {
@@ -297,18 +267,7 @@ func wgTurnOnMultihopInner(tun tun.Device, exitSettings *C.char, entrySettings *
 
 	logger.Verbosef("Device started")
 
-	var i int32
-	for i = 0; i < math.MaxInt32; i++ {
-		if _, exists := tunnelHandles[i]; !exists {
-			break
-		}
-	}
-	if i == math.MaxInt32 {
-		tun.Close()
-		return errDeviceLimitHit
-	}
-	tunnelHandles[i] = tunnelHandle{exitDev, entryDev, logger, virtualNet}
-	return i
+	return insertHandle(tunnelHandles, tunnelHandle{exitDev, entryDev, logger, virtualNet})
 }
 
 func wgTurnOnMultihopInnerIAN(tun tun.Device, exitSettings *C.char, entrySettings *C.char, privateIp *C.char, exitMtu int, logger *device.Logger, maybeNotMachines *C.char, maybeNotMaxEvents uint32, maybeNotMaxActions uint32) int32 {
@@ -373,18 +332,7 @@ func wgTurnOnMultihopInnerIAN(tun tun.Device, exitSettings *C.char, entrySetting
 
 	logger.Verbosef("Device started")
 
-	var i int32
-	for i = 0; i < math.MaxInt32; i++ {
-		if _, exists := tunnelHandles[i]; !exists {
-			break
-		}
-	}
-	if i == math.MaxInt32 {
-		tun.Close()
-		return errDeviceLimitHit
-	}
-	tunnelHandles[i] = tunnelHandle{exitDev, entryDev, logger, virtualNet}
-	return i
+	return insertHandle(tunnelHandles, tunnelHandle{exitDev, entryDev, logger, virtualNet})
 }
 
 //export wgTurnOnMultihop
@@ -481,18 +429,7 @@ func wgTurnOn(settings *C.char, tunFd int32, maybeNotMachines *C.char, maybeNotM
 		}
 	}
 
-	var i int32
-	for i = 1; i < math.MaxInt32; i++ {
-		if _, exists := tunnelHandles[i]; !exists {
-			break
-		}
-	}
-	if i == math.MaxInt32 {
-		unix.Close(dupTunFd)
-		return errDeviceLimitHit
-	}
-	tunnelHandles[i] = tunnelHandle{dev, nil, logger, nil}
-	return i
+	return insertHandle(tunnelHandles, tunnelHandle{dev, nil, logger, nil})
 }
 
 func wgTurnOnIANFromExistingTunnel(tun tun.Device, settings string, privateAddr netip.Addr, maybeNotMachines *C.char, maybeNotMaxEvents uint32, maybeNotMaxActions uint32) int32 {
