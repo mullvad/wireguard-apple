@@ -120,7 +120,8 @@ func insertHandle[T interface{}](hl map[int32]T, value T) int32 {
 }
 
 type icmpHandle struct {
-	icmpSocket *net.Conn
+	tunnelHandle int32
+	icmpSocket   *net.Conn
 }
 
 var icmpHandles = make(map[int32]icmpHandle)
@@ -549,6 +550,11 @@ func wgTurnOff(tunnelHandle int32) {
 	if !ok {
 		return
 	}
+	for icmpHandle, icmpData := range icmpHandles {
+		if icmpData.tunnelHandle == tunnelHandle {
+			wgCloseInTunnelICMP(icmpHandle)
+		}
+	}
 	delete(tunnelHandles, tunnelHandle)
 
 	handle.exit.Close()
@@ -637,7 +643,7 @@ func wgOpenInTunnelICMP(tunnelHandle int32, address *C.char) int32 {
 	}
 	conn, _ := handle.virtualNet.Dial("ping4", C.GoString(address))
 
-	result := insertHandle(icmpHandles, icmpHandle{&conn})
+	result := insertHandle(icmpHandles, icmpHandle{tunnelHandle, &conn})
 	if result < 0 {
 		conn.Close()
 	}
@@ -743,7 +749,7 @@ func configureDaita(device *device.Device, config string, machines string, maxEv
 func main() {}
 
 // Parse a wireguard config and return the first endpoint address it finds and
-// parses successfully.
+// parses successfully.gi b
 func parseEndpointFromConfig(config string) *netip.AddrPort {
 	scanner := bufio.NewScanner(strings.NewReader(config))
 	for scanner.Scan() {
