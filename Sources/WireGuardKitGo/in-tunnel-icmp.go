@@ -5,6 +5,7 @@ import "C"
 import (
 	"bytes"
 	"net"
+	"time"
 
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
@@ -109,23 +110,10 @@ func wgSendAndAwaitInTunnelPing(tunnelHandle int32, socketHandle int32, sequence
 		return errICMPWriteSocket
 	}
 	defer close(shutdownChannel)
-	return int32(<-resultChannel)
-	// readBuff := make([]byte, 1024)
-	// readBytes, err := (*(socket.icmpSocket)).Read(readBuff)
-	// // it appears to be failing here sometimes in the app
-	// if readBytes <= 0 || err != nil {
-	// 	return errICMPReadSocket
-	// }
-	// replyPacket, err := icmp.ParseMessage(1, readBuff[:readBytes])
-	// if err != nil {
-	// 	return errICMPResponseFormat
-	// }
-	// replyPing, ok := replyPacket.Body.(*icmp.Echo)
-	// if !ok {
-	// 	return errICMPResponseFormat
-	// }
-	// if replyPing.Seq != int(sequenceNumber) || !bytes.Equal(replyPing.Data, pingdata) {
-	// 	return errICMPResponseContent
-	// }
-	// return int32(sequenceNumber)
+	select {
+	case result := <-resultChannel:
+		return int32(result)
+	case <-time.After(10 * time.Second):
+		return errICMPTimeout
+	}
 }

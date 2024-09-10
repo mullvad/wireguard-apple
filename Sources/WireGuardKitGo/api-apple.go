@@ -64,6 +64,7 @@ const (
 	errNoSuchTunnel
 	// tunnel does not have virtual interface
 	errNoTunnelVirtualInterface
+	errICMPTimeout
 )
 
 var loggerFunc unsafe.Pointer
