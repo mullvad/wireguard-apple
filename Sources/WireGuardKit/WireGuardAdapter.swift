@@ -28,6 +28,18 @@ public enum WireGuardAdapterError: Error {
 
     /// Config has no private IPs.
     case noInterfaceIp
+
+    /// The tunnel descriptor provided does not refer to an open tunnel
+    case noSuchTunnel
+    
+    /// the tunnel exists, but does not have a virtual interface
+    case noTunnelVirtualInterface
+
+    /// ICMP socket not open
+    case icmpSocketNotOpen
+
+    /// internal error
+    case internalError(Int32)
 }
 
 /// Enum representing internal state of the `WireGuardAdapter`
@@ -65,6 +77,9 @@ public class WireGuardAdapter {
 
     /// Adapter state.
     private var state: State = .stopped
+
+    /// ICMP socket handle, if open
+    private var icmpSocketHandle: Int32?
 
     /// Whether adapter should automatically raise the `reasserting` flag when updating
     /// tunnel configuration.
@@ -435,7 +450,8 @@ public class WireGuardAdapter {
         let handle = if let entryWgConfig {
             wgTurnOnMultihop(exitWgConfig, entryWgConfig, privateAddr, tunnelFileDescriptor, daita?.machines ?? nil, daita?.maxEvents ?? 0, daita?.maxActions ?? 0)
         } else {
-            wgTurnOn(exitWgConfig, tunnelFileDescriptor, daita?.machines ?? nil, daita?.maxEvents ?? 0, daita?.maxActions ?? 0)
+            wgTurnOnIAN(exitWgConfig, tunnelFileDescriptor, privateAddr, daita?.machines ?? nil, daita?.maxEvents ?? 0, daita?.maxActions ?? 0)
+//            wgTurnOn(exitWgConfig, tunnelFileDescriptor, daita?.machines ?? nil, daita?.maxEvents ?? 0, daita?.maxActions ?? 0)
         }
         if handle < 0 {
             throw WireGuardAdapterError.startWireGuardBackend(handle)
@@ -574,6 +590,57 @@ public class WireGuardAdapter {
         #else
         #error("Unsupported")
         #endif
+    }
+}
+
+// A protocol encompassing the stateful ICMP ping capabilities of the WireGuardAdapter, decoupling them from its implementation
+public protocol ICMPPingProvider {
+    func openICMP(address: IPv4Address) throws
+
+    func closeICMP()
+
+    @discardableResult func sendICMPPing(seqNumber: UInt16) throws -> Int32
+}
+
+extension WireGuardAdapter: ICMPPingProvider {
+    /// MARK: ICMP Ping functionality
+    public func openICMP(address: IPv4Address) throws {
+        guard case .started(let tunnelHandle, _) = self.state else {
+            throw WireGuardAdapterError.invalidState
+        }
+        // assumption: the description of an IPv4Address will always produce valid ASCII
+        let addrString = "\(address)"
+        let socket = wgOpenInTunnelICMP(tunnelHandle, addrString)
+        if socket < 0 {
+            switch socket {
+            case -19: // errInvalidTunnel
+                throw WireGuardAdapterError.noSuchTunnel
+                // this can currently only happen if we have 2^31 sockets, so if it happens, there's a bug somewhere
+                default: throw WireGuardAdapterError.internalError(socket)
+            }
+        }
+        self.icmpSocketHandle = socket
+    }
+
+    public func closeICMP() {
+        if let icmpSocketHandle {
+            wgCloseInTunnelICMP(icmpSocketHandle)
+            self.icmpSocketHandle = nil
+        }
+    }
+
+    @discardableResult public func sendICMPPing(seqNumber: UInt16) throws -> Int32 {
+        guard case .started(let tunnelHandle, _) = self.state, let icmpSocketHandle else {
+            throw WireGuardAdapterError.icmpSocketNotOpen
+        }
+        let seq = wgSendAndAwaitInTunnelPing(tunnelHandle, icmpSocketHandle, seqNumber)
+        if seq >= 0 { return seq }
+        switch seq {
+        case -14: // errICMPOpenSocket
+            throw WireGuardAdapterError.icmpSocketNotOpen
+            // TODO: more fine-grained errors
+            default: throw WireGuardAdapterError.internalError(seq)
+        }
     }
 }
 
