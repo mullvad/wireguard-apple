@@ -54,10 +54,10 @@ const (
 	errNoPeer
 	// Failed to enable DAITA
 	errEnableDaita
-	// ICMP errors
-	errICMPOpenSocket
-	errICMPWriteSocket
-	errICMPReadSocket
+	// ICMP/TCP connection errors
+	errNoMatchingSocket
+	errWriteSocket
+	errReadSocket
 	errICMPResponseFormat
 	errICMPResponseContent
 	// no such tunnel exists
@@ -95,13 +95,28 @@ type tunnelHandle struct {
 	virtualNet *netstack.Net
 }
 
-type icmpHandle struct {
+const (
+	socketTypeICMP = iota
+	socketTypeTCP
+)
+
+type socketHandle struct {
 	tunnelHandle int32
-	icmpSocket   *net.Conn
+	socketType   int
+	socket       *net.Conn
 }
 
 var tunnelHandles = make(map[int32]tunnelHandle)
-var icmpHandles = make(map[int32]icmpHandle)
+var socketHandles = make(map[int32]socketHandle)
+
+func wgCloseInTunnelSocketHandle(socketHandle int32) bool {
+	socket, ok := socketHandles[socketHandle]
+	if ok {
+		(*(socket.socket)).Close()
+		delete(socketHandles, socketHandle)
+	}
+	return ok
+}
 
 var rng = rand.New(rand.NewSource(time.Now().UnixNano()))
 
@@ -281,14 +296,9 @@ func wgTurnOff(tunnelHandle int32) {
 	if !ok {
 		return
 	}
-	for icmpHandle, icmpData := range icmpHandles {
-		if icmpData.tunnelHandle == tunnelHandle {
-			wgCloseInTunnelICMP(icmpHandle)
-		}
-	}
-	for tcpHandle, tcpData := range tcpHandles {
-		if tcpData.tunnelHandle == tunnelHandle {
-			wgCloseInTunnelICMP(tcpHandle)
+	for sockHandle, sockData := range socketHandles {
+		if sockData.tunnelHandle == tunnelHandle {
+			wgCloseInTunnelSocketHandle(sockHandle)
 		}
 	}
 	delete(tunnelHandles, tunnelHandle)

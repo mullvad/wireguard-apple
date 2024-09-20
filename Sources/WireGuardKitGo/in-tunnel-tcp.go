@@ -2,18 +2,6 @@ package main
 
 import "C"
 
-import "net"
-
-type tcpHandle struct {
-	tunnelHandle int32
-	tcpSocket    *net.Conn
-}
-
-var tcpHandles = make(map[int32]tcpHandle)
-
-// this could be generalised with the ICMP opener
-//
-
 //export wgOpenInTunnelTCP
 func wgOpenInTunnelTCP(tunnelHandle int32, address *C.char) int32 {
 	handle, ok := tunnelHandles[tunnelHandle]
@@ -25,7 +13,7 @@ func wgOpenInTunnelTCP(tunnelHandle int32, address *C.char) int32 {
 	}
 	conn, _ := handle.virtualNet.Dial("tcp", C.GoString(address))
 
-	result := insertHandle(tcpHandles, tcpHandle{tunnelHandle, &conn})
+	result := insertHandle(socketHandles, socketHandle{tunnelHandle, socketTypeTCP, &conn})
 	if result < 0 {
 		conn.Close()
 	}
@@ -34,34 +22,27 @@ func wgOpenInTunnelTCP(tunnelHandle int32, address *C.char) int32 {
 
 //export wgCloseInTunnelTCP
 func wgCloseInTunnelTCP(socketHandle int32) bool {
-	socket, ok := tcpHandles[socketHandle]
-	if ok {
-		(*(socket.tcpSocket)).Close()
-		delete(tcpHandles, socketHandle)
-	}
-	return ok
+	return wgCloseInTunnelSocketHandle(socketHandle)
 }
 
 //
 
 //export wgSendAndAwaitInTunnelTCP
 func wgSendAndAwaitInTunnelTCP(tunnelHandle int32, socketHandle int32, data []byte, replyBuf []byte) int32 {
-	socket, ok := tcpHandles[socketHandle]
-	if !ok {
-		// TODO: rename this to not be ICMP-specific, i.e., errOpenInTunnelConnection
-		return errICMPOpenSocket
+	socket, ok := socketHandles[socketHandle]
+	if !ok || socket.socketType != socketTypeTCP {
+		return errNoMatchingSocket
 	}
 
-	_, err := (*(socket.tcpSocket)).Write(data)
+	_, err := (*(socket.socket)).Write(data)
 	if err != nil {
-		// Also rename to generalise
-		return errICMPWriteSocket
+		return errWriteSocket
 	}
 
-	readBytes, err := (*(socket.tcpSocket)).Read(replyBuf)
+	readBytes, err := (*(socket.socket)).Read(replyBuf)
 	if readBytes <= 0 || err != nil {
 		// ditto
-		return errICMPReadSocket
+		return errReadSocket
 	}
 
 	return int32(readBytes)

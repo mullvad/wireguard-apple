@@ -22,7 +22,7 @@ func wgOpenInTunnelICMP(tunnelHandle int32, address *C.char) int32 {
 	}
 	conn, _ := handle.virtualNet.Dial("ping4", C.GoString(address))
 
-	result := insertHandle(icmpHandles, icmpHandle{tunnelHandle, &conn})
+	result := insertHandle(socketHandles, socketHandle{tunnelHandle, socketTypeICMP, &conn})
 	if result < 0 {
 		conn.Close()
 	}
@@ -31,12 +31,7 @@ func wgOpenInTunnelICMP(tunnelHandle int32, address *C.char) int32 {
 
 //export wgCloseInTunnelICMP
 func wgCloseInTunnelICMP(socketHandle int32) bool {
-	socket, ok := icmpHandles[socketHandle]
-	if ok {
-		(*(socket.icmpSocket)).Close()
-		delete(icmpHandles, socketHandle)
-	}
-	return ok
+	return wgCloseInTunnelSocketHandle(socketHandle)
 }
 
 // returns the sequence number or an error code
@@ -44,7 +39,7 @@ func parsePingResponse(socket *net.Conn, pingdata []byte) int {
 	readBuff := make([]byte, 1024)
 	readBytes, err := (*(socket)).Read(readBuff)
 	if readBytes <= 0 || err != nil {
-		return errICMPReadSocket
+		return errReadSocket
 	}
 	replyPacket, err := icmp.ParseMessage(1, readBuff[:readBytes])
 	if err != nil {
@@ -64,9 +59,9 @@ func parsePingResponse(socket *net.Conn, pingdata []byte) int {
 //
 //export wgSendAndAwaitInTunnelPing
 func wgSendAndAwaitInTunnelPing(tunnelHandle int32, socketHandle int32, sequenceNumber uint16) int32 {
-	socket, ok := icmpHandles[socketHandle]
-	if !ok {
-		return errICMPOpenSocket
+	socket, ok := socketHandles[socketHandle]
+	if !ok || socket.socketType != socketTypeICMP {
+		return errNoMatchingSocket
 	}
 	dataLength := 16
 	pingdata := make([]byte, dataLength)
@@ -84,7 +79,7 @@ func wgSendAndAwaitInTunnelPing(tunnelHandle int32, socketHandle int32, sequence
 				return
 			default:
 			}
-			result := parsePingResponse(socket.icmpSocket, pingdata)
+			result := parsePingResponse(socket.socket, pingdata)
 			if result == errICMPResponseContent || result >= 0 {
 				resultChannel <- result
 				return
@@ -102,9 +97,9 @@ func wgSendAndAwaitInTunnelPing(tunnelHandle int32, socketHandle int32, sequence
 		},
 	}
 	pingBytes, err := ping.Marshal(nil)
-	_, err = (*(socket.icmpSocket)).Write(pingBytes)
+	_, err = (*(socket.socket)).Write(pingBytes)
 	if err != nil {
-		return errICMPWriteSocket
+		return errWriteSocket
 	}
 	defer close(shutdownChannel)
 	select {
