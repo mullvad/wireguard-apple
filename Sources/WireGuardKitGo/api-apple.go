@@ -286,6 +286,11 @@ func wgTurnOff(tunnelHandle int32) {
 			wgCloseInTunnelICMP(icmpHandle)
 		}
 	}
+	for tcpHandle, tcpData := range tcpHandles {
+		if tcpData.tunnelHandle == tunnelHandle {
+			wgCloseInTunnelICMP(tcpHandle)
+		}
+	}
 	delete(tunnelHandles, tunnelHandle)
 
 	handle.exit.Close()
