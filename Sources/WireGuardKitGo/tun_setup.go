@@ -63,13 +63,19 @@ func addTunnelFromDevice(dev *device.Device, entryDev *device.Device, settings s
 			dev.Close()
 			return errBadWgConfig
 		}
-	}
-
-	// Enable DAITA if DAITA parameters are passed through
-	if maybeNotMachines != nil {
-		returnValue := configureDaita(entryDev, entrySettings, C.GoString(maybeNotMachines), maybeNotMaxEvents, maybeNotMaxActions)
-		if returnValue != 0 {
-			return returnValue
+		if maybeNotMachines != nil {
+			returnValue := configureDaita(entryDev, entrySettings, C.GoString(maybeNotMachines), maybeNotMaxEvents, maybeNotMaxActions)
+			if returnValue != 0 {
+				return returnValue
+			}
+		}
+	} else {
+		// Enable DAITA if DAITA parameters are passed through
+		if maybeNotMachines != nil {
+			returnValue := configureDaita(dev, settings, C.GoString(maybeNotMachines), maybeNotMaxEvents, maybeNotMaxActions)
+			if returnValue != 0 {
+				return returnValue
+			}
 		}
 	}
 
