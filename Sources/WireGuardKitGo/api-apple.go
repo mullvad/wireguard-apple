@@ -182,7 +182,6 @@ func wgTurnOnMultihopInner(tun tun.Device, exitSettings *C.char, entrySettings *
 	wrapper := NewRouter(tun, vtun)
 	exitDev := device.NewDevice(&wrapper, singletun.Binder(), logger)
 
-	// refactoring unrolled for better mergeability, until the dust settles
 	return addTunnelFromDevice(exitDev, entryDev, exitConfigString, entryConfigString, virtualNet, logger, maybeNotMachines, maybeNotMaxEvents, maybeNotMaxActions)
 }
 
@@ -193,7 +192,6 @@ func wgTurnOnMultihop(exitSettings *C.char, entrySettings *C.char, privateIp *C.
 		Errorf:   CLogger(1).Printf,
 	}
 
-	// refactoring unrolled for better mergeability, until the dust settles
 	tun, errCode := openTUNFromSocket(tunFd, logger)
 	if tun == nil {
 		return errCode
@@ -214,7 +212,7 @@ func wgTurnOn(settings *C.char, tunFd int32, maybeNotMachines *C.char, maybeNotM
 		Verbosef: CLogger(0).Printf,
 		Errorf:   CLogger(1).Printf,
 	}
-	// refactoring unrolled for better mergeability, until the dust settles
+
 	tun, errCode := openTUNFromSocket(tunFd, logger)
 	if tun == nil {
 		return errCode

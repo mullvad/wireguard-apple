@@ -51,8 +51,8 @@ func bringUpDevice(dev *device.Device, settings string, logger *device.Logger) e
 	return nil
 }
 
-func addTunnelFromDevice(dev *device.Device, entryDev *device.Device, settings string, entrySettings string, virtualNet *netstack.Net, logger *device.Logger, maybeNotMachines *C.char, maybeNotMaxEvents uint32, maybeNotMaxActions uint32) int32 {
-	err := bringUpDevice(dev, settings, logger)
+func addTunnelFromDevice(exitDev *device.Device, entryDev *device.Device, settings string, entrySettings string, virtualNet *netstack.Net, logger *device.Logger, maybeNotMachines *C.char, maybeNotMaxEvents uint32, maybeNotMaxActions uint32) int32 {
+	err := bringUpDevice(exitDev, settings, logger)
 	if err != nil {
 		return errBadWgConfig
 	}
@@ -60,18 +60,24 @@ func addTunnelFromDevice(dev *device.Device, entryDev *device.Device, settings s
 	if entryDev != nil {
 		err = bringUpDevice(entryDev, entrySettings, logger)
 		if err != nil {
-			dev.Close()
+			exitDev.Close()
 			return errBadWgConfig
 		}
-	}
-
-	// Enable DAITA if DAITA parameters are passed through
-	if maybeNotMachines != nil {
-		returnValue := configureDaita(entryDev, entrySettings, C.GoString(maybeNotMachines), maybeNotMaxEvents, maybeNotMaxActions)
-		if returnValue != 0 {
-			return returnValue
+		if maybeNotMachines != nil {
+			returnValue := configureDaita(entryDev, entrySettings, C.GoString(maybeNotMachines), maybeNotMaxEvents, maybeNotMaxActions)
+			if returnValue != 0 {
+				return returnValue
+			}
+		}
+	} else {
+		// Enable DAITA if DAITA parameters are passed through
+		if maybeNotMachines != nil {
+			returnValue := configureDaita(exitDev, settings, C.GoString(maybeNotMachines), maybeNotMaxEvents, maybeNotMaxActions)
+			if returnValue != 0 {
+				return returnValue
+			}
 		}
 	}
 
-	return insertHandle(tunnelHandles, tunnelHandle{dev, entryDev, logger, virtualNet})
+	return insertHandle(tunnelHandles, tunnelHandle{exitDev, entryDev, logger, virtualNet})
 }
