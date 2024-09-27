@@ -31,7 +31,7 @@ public enum WireGuardAdapterError: Error {
 
     /// The tunnel descriptor provided does not refer to an open tunnel
     case noSuchTunnel
-    
+
     /// the tunnel exists, but does not have a virtual interface
     case noTunnelVirtualInterface
 
@@ -84,6 +84,9 @@ public class WireGuardAdapter {
     /// Whether adapter should automatically raise the `reasserting` flag when updating
     /// tunnel configuration.
     private let shouldHandleReasserting: Bool
+
+    ///
+    private var pingId: Int32 = Int32.random(in: Int32.min...Int32.max)
 
     /// Tunnel device file descriptor.
     private var tunnelFileDescriptor: Int32? {
@@ -201,14 +204,14 @@ public class WireGuardAdapter {
             }
         }
     }
-    
+
     public func startMultihop(exitConfiguration: TunnelConfiguration, entryConfiguration: TunnelConfiguration?, daita: DaitaConfiguration? = nil, completionHandler: @escaping (WireGuardAdapterError?) -> Void) {
         workQueue.async {
             guard case .stopped = self.state else {
                 completionHandler(.invalidState)
                 return
             }
-            
+
             guard let privateAddress = exitConfiguration.interface.addresses.compactMap({ $0.address as? IPv4Address }).first else
             {
                 self.logHandler(.error, "WireGuardAdapter.start: No private IPv4 address found")
@@ -239,7 +242,7 @@ public class WireGuardAdapter {
                 fatalError()
             }
         }
-    
+
     }
 
     /// Start the tunnel tunnel.
@@ -456,6 +459,7 @@ public class WireGuardAdapter {
         if handle < 0 {
             throw WireGuardAdapterError.startWireGuardBackend(handle)
         }
+        pingId = Int32.random(in: Int32.min...Int32.max)
         #if os(iOS)
         wgDisableSomeRoamingForBrokenMobileSemantics(handle)
         #endif
@@ -470,13 +474,13 @@ public class WireGuardAdapter {
     /// - Returns: an instance of type `PacketTunnelSettingsGenerator`.
     private func makeSettingsGenerator(with exitConfiguration: TunnelConfiguration, entryConfiguration: TunnelConfiguration? = nil, daita: DaitaConfiguration? = nil) throws -> PacketTunnelSettingsGenerator {
         let resolvedExitEndpoints = try self.resolvePeers(for: exitConfiguration)
-        
+
         var entry: DeviceConfiguration? = nil
         if let entryConfiguration {
             let resolvedEntryEndpoints = try self.resolvePeers(for: entryConfiguration)
             entry = DeviceConfiguration(configuration: entryConfiguration, resolvedEndpoints: resolvedEntryEndpoints, reResolveEndpoint: true)
         }
-        
+
         // Disable NAT64 resolution for exit relays when multihop is enabled
         return PacketTunnelSettingsGenerator(
             exit: DeviceConfiguration(configuration: exitConfiguration, resolvedEndpoints: resolvedExitEndpoints, reResolveEndpoint: entry == nil),
@@ -561,7 +565,7 @@ public class WireGuardAdapter {
             guard isSatisfiable else { return }
 
             self.logHandler(.verbose, "Connectivity online, resuming backend.")
-            
+
             guard let privateAddress = settingsGenerator.exit.configuration.interface.addresses.compactMap({ $0.address as? IPv4Address }).first else
             {
                 self.logHandler(.error, "WireGuardAdapter.start: No private IPv4 address found")
@@ -599,7 +603,8 @@ public protocol ICMPPingProvider {
 
     func closeICMP()
 
-    @discardableResult func sendICMPPing(seqNumber: UInt16) throws -> Int32
+    @discardableResult func sendICMPPing(seqNumber: UInt16) throws
+    func receiveICMP() throws -> Int32
 }
 
 extension WireGuardAdapter: ICMPPingProvider {
@@ -629,18 +634,37 @@ extension WireGuardAdapter: ICMPPingProvider {
         }
     }
 
-    @discardableResult public func sendICMPPing(seqNumber: UInt16) throws -> Int32 {
+    // Returns the sequence number of the ICMP message that was received.
+    // This could be improved by also returning the ID of the message that was received.
+    public func receiveICMP() throws -> Int32 {
         guard case .started(let tunnelHandle, _) = self.state, let icmpSocketHandle else {
             throw WireGuardAdapterError.icmpSocketNotOpen
         }
-        let seq = wgSendAndAwaitInTunnelPing(tunnelHandle, icmpSocketHandle, seqNumber)
-        if seq >= 0 { return seq }
-        switch seq {
-        case -14: // errICMPOpenSocket
+        let result = wgRecvInTunnelPing(tunnelHandle, icmpSocketHandle)
+        if result < 0 {
+            try Self.throwError(result: result)
+        }
+
+        return result
+    }
+
+    public func sendICMPPing(seqNumber: UInt16) throws {
+        guard case .started(let tunnelHandle, _) = self.state, let icmpSocketHandle else {
+            throw WireGuardAdapterError.icmpSocketNotOpen
+        }
+        let seq = wgSendInTunnelPing(tunnelHandle, icmpSocketHandle, pingId, 16, seqNumber)
+        if seq < 0 { try Self.throwError(result: seq) }
+        return
+    }
+
+    private static func throwError(result: Int32) throws {
+         switch result {
+            case -14: // errICMPOpenSocket
             throw WireGuardAdapterError.icmpSocketNotOpen
             // TODO: more fine-grained errors
-            default: throw WireGuardAdapterError.internalError(seq)
+            default: throw WireGuardAdapterError.internalError(result)
         }
+
     }
 }
 

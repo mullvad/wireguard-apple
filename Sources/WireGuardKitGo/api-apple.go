@@ -97,7 +97,7 @@ type tunnelHandle struct {
 
 type icmpHandle struct {
 	tunnelHandle int32
-	icmpSocket   *net.Conn
+	icmpSocket   net.Conn
 }
 
 var tunnelHandles = make(map[int32]tunnelHandle)

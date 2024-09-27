@@ -30,7 +30,18 @@ func TestPing(t *testing.T) {
 
 	pinger := wgOpenInTunnelICMP(tunnel, cstring("1.2.3.5"))
 
-	result := wgSendAndAwaitInTunnelPing(tunnel, pinger, 1)
+	pingResultChan := make(chan int32)
+	go func() {
+		result := wgRecvInTunnelPing(tunnel, pinger)
+		pingResultChan <- result
+	}()
+
+	result := wgSendInTunnelPing(tunnel, pinger,  123, 24, 1)
+	if result < 0 {
+		t.Fatalf("Failed to send in tunnel ping")
+	}
+
+	result = <- pingResultChan
 
 	assert.Equal(t, result, int32(1))
 

@@ -3,9 +3,7 @@ package main
 import "C"
 
 import (
-	"bytes"
 	"net"
-	"time"
 
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
@@ -22,7 +20,7 @@ func wgOpenInTunnelICMP(tunnelHandle int32, address *C.char) int32 {
 	}
 	conn, _ := handle.virtualNet.Dial("ping4", C.GoString(address))
 
-	result := insertHandle(icmpHandles, icmpHandle{tunnelHandle, &conn})
+	result := insertHandle(icmpHandles, icmpHandle{tunnelHandle, conn})
 	if result < 0 {
 		conn.Close()
 	}
@@ -33,16 +31,16 @@ func wgOpenInTunnelICMP(tunnelHandle int32, address *C.char) int32 {
 func wgCloseInTunnelICMP(socketHandle int32) bool {
 	socket, ok := icmpHandles[socketHandle]
 	if ok {
-		(*(socket.icmpSocket)).Close()
+		socket.icmpSocket.Close()
 		delete(icmpHandles, socketHandle)
 	}
 	return ok
 }
 
 // returns the sequence number or an error code
-func parsePingResponse(socket *net.Conn, pingdata []byte) int {
+func parsePingResponse(socket net.Conn) int32 {
 	readBuff := make([]byte, 1024)
-	readBytes, err := (*(socket)).Read(readBuff)
+	readBytes, err := socket.Read(readBuff)
 	if readBytes <= 0 || err != nil {
 		return errICMPReadSocket
 	}
@@ -54,63 +52,57 @@ func parsePingResponse(socket *net.Conn, pingdata []byte) int {
 	if !ok {
 		return errICMPResponseFormat
 	}
-	if !bytes.Equal(replyPing.Data, pingdata) {
-		return errICMPResponseContent
-	}
-	return replyPing.Seq
+	return int32(replyPing.Seq)
+}
+
+//export wgRecvInTunnelPing
+func wgRecvInTunnelPing(tunnelHandel int32, socketHandle int32) int32 {
+			handle, ok := icmpHandles[socketHandle]
+			if !ok {
+				return errICMPOpenSocket
+			}
+
+			for {
+				result := recvInTunnelPing(handle.icmpSocket)
+				if result != errICMPResponseFormat {
+					return result
+				}
+			}
+}
+
+func recvInTunnelPing(ping net.Conn)  int32 {
+			return parsePingResponse(ping)
 }
 
 // this returns the sequence number or a negative value if an error occurred
+// This function can be called concurrently.
 //
-//export wgSendAndAwaitInTunnelPing
-func wgSendAndAwaitInTunnelPing(tunnelHandle int32, socketHandle int32, sequenceNumber uint16) int32 {
+//export wgSendInTunnelPing
+func wgSendInTunnelPing(tunnelHandle int32, socketHandle int32, pingId int, pingSize int, sequenceNumber uint16) int32 {
 	socket, ok := icmpHandles[socketHandle]
 	if !ok {
 		return errICMPOpenSocket
 	}
-	dataLength := 16
-	pingdata := make([]byte, dataLength)
+	pingdata := make([]byte, pingSize)
 	_, err := rng.Read(pingdata)
-	pingid := rng.Int()
 
-	resultChannel := make(chan int)
-	shutdownChannel := make(chan struct{})
 
-	// the reading goroutine
-	go func() {
-		for {
-			select {
-			case <-shutdownChannel:
-				return
-			default:
-			}
-			result := parsePingResponse(socket.icmpSocket, pingdata)
-			if result == errICMPResponseContent || result >= 0 {
-				resultChannel <- result
-				return
-			}
-		}
-	}()
-
-	// probably not worth checking for an error here
 	ping := icmp.Message{
 		Type: ipv4.ICMPTypeEcho,
 		Body: &icmp.Echo{
-			ID:   pingid,
+			ID:   pingId,
 			Seq:  int(sequenceNumber),
 			Data: pingdata,
 		},
 	}
 	pingBytes, err := ping.Marshal(nil)
-	_, err = (*(socket.icmpSocket)).Write(pingBytes)
 	if err != nil {
 		return errICMPWriteSocket
 	}
-	defer close(shutdownChannel)
-	select {
-	case result := <-resultChannel:
-		return int32(result)
-	case <-time.After(10 * time.Second):
-		return errICMPTimeout
+	_, err = socket.icmpSocket.Write(pingBytes)
+	if err != nil {
+		return errICMPWriteSocket
 	}
+	return 0
 }
+
