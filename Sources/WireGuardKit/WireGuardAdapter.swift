@@ -85,8 +85,8 @@ public class WireGuardAdapter {
     /// tunnel configuration.
     private let shouldHandleReasserting: Bool
 
-    ///
-    private var pingId: Int32 = Int32.random(in: Int32.min...Int32.max)
+    /// ID to use for ICMP echo requests. Should be reset for every tunnel connection.
+    private var pingId: UInt16 = UInt16.random(in: UInt16.min...UInt16.max)
 
     /// Tunnel device file descriptor.
     private var tunnelFileDescriptor: Int32? {
@@ -459,7 +459,7 @@ public class WireGuardAdapter {
         if handle < 0 {
             throw WireGuardAdapterError.startWireGuardBackend(handle)
         }
-        pingId = Int32.random(in: Int32.min...Int32.max)
+        pingId = UInt16.random(in: UInt16.min...UInt16.max)
         #if os(iOS)
         wgDisableSomeRoamingForBrokenMobileSemantics(handle)
         #endif

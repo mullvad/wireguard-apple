@@ -78,7 +78,7 @@ func recvInTunnelPing(ping net.Conn)  int32 {
 // This function can be called concurrently.
 //
 //export wgSendInTunnelPing
-func wgSendInTunnelPing(tunnelHandle int32, socketHandle int32, pingId int, pingSize int, sequenceNumber uint16) int32 {
+func wgSendInTunnelPing(tunnelHandle int32, socketHandle int32, pingId uint16, pingSize int, sequenceNumber uint16) int32 {
 	socket, ok := icmpHandles[socketHandle]
 	if !ok {
 		return errICMPOpenSocket
@@ -90,7 +90,7 @@ func wgSendInTunnelPing(tunnelHandle int32, socketHandle int32, pingId int, ping
 	ping := icmp.Message{
 		Type: ipv4.ICMPTypeEcho,
 		Body: &icmp.Echo{
-			ID:   pingId,
+			ID:   int(pingId),
 			Seq:  int(sequenceNumber),
 			Data: pingdata,
 		},
