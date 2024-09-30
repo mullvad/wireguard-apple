@@ -57,21 +57,24 @@ func parsePingResponse(socket net.Conn) int32 {
 
 //export wgRecvInTunnelPing
 func wgRecvInTunnelPing(tunnelHandel int32, socketHandle int32) int32 {
-			handle, ok := icmpHandles[socketHandle]
-			if !ok {
-				return errICMPOpenSocket
-			}
+	handle, ok := icmpHandles[socketHandle]
+	if !ok {
+		return errICMPOpenSocket
+	}
 
-			for {
-				result := recvInTunnelPing(handle.icmpSocket)
-				if result != errICMPResponseFormat {
-					return result
-				}
-			}
+	for {
+		// Receive ICMP packets until an echo-response is received
+		result := recvInTunnelPing(handle.icmpSocket)
+		// Only break the loop if the error has nothing to do with the ICMP response format.
+		// It should ignore malformed responses and non-echo-responses.
+		if result != errICMPResponseFormat {
+			return result
+		}
+	}
 }
 
-func recvInTunnelPing(ping net.Conn)  int32 {
-			return parsePingResponse(ping)
+func recvInTunnelPing(ping net.Conn) int32 {
+	return parsePingResponse(ping)
 }
 
 // this returns the sequence number or a negative value if an error occurred
@@ -85,7 +88,6 @@ func wgSendInTunnelPing(tunnelHandle int32, socketHandle int32, pingId uint16, p
 	}
 	pingdata := make([]byte, pingSize)
 	_, err := rng.Read(pingdata)
-
 
 	ping := icmp.Message{
 		Type: ipv4.ICMPTypeEcho,
@@ -105,4 +107,3 @@ func wgSendInTunnelPing(tunnelHandle int32, socketHandle int32, pingId uint16, p
 	}
 	return 0
 }
-
