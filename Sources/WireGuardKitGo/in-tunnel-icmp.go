@@ -55,6 +55,7 @@ func parsePingResponse(socket net.Conn) int32 {
 	return int32(replyPing.Seq)
 }
 
+// This function blocks until the ICMP socket is closed or an ICMP echo-response is received.
 //export wgRecvInTunnelPing
 func wgRecvInTunnelPing(tunnelHandel int32, socketHandle int32) int32 {
 	handle, ok := icmpHandles[socketHandle]
