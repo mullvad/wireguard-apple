@@ -1,6 +1,8 @@
 module golang.zx2c4.com/wireguard/apple
 
-go 1.20
+go 1.21
+
+toolchain go1.21.10
 
 require (
 	github.com/stretchr/testify v1.9.0

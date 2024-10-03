@@ -29,10 +29,10 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/unix"
-	"golang.zx2c4.com/wireguard/apple/multihoptun"
 	"golang.zx2c4.com/wireguard/conn"
 	"golang.zx2c4.com/wireguard/device"
 	"golang.zx2c4.com/wireguard/tun"
+	"golang.zx2c4.com/wireguard/tun/multihoptun"
 	"golang.zx2c4.com/wireguard/tun/netstack"
 )
 
