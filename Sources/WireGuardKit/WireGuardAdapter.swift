@@ -624,6 +624,7 @@ public protocol ICMPPingProvider {
 extension WireGuardAdapter: ICMPPingProvider {
     /// MARK: ICMP Ping functionality
     private func openICMP(address: IPv4Address) throws {
+        dispatchPrecondition(condition: .onQueue(workQueue))
         guard case .started(let tunnelHandle, _) = self.state else {
             throw WireGuardAdapterError.invalidState
         }
@@ -646,6 +647,7 @@ extension WireGuardAdapter: ICMPPingProvider {
     }
 
     private func closeICMP() {
+        dispatchPrecondition(condition: .onQueue(workQueue))
         if let icmpSocketHandle {
             wgCloseInTunnelICMP(icmpSocketHandle)
             self.icmpSocketHandle = nil
@@ -655,10 +657,14 @@ extension WireGuardAdapter: ICMPPingProvider {
     // Returns the sequence number of the ICMP message that was received.
     // This could be improved by also returning the ID of the message that was received.
     public func receiveICMP() throws -> Int32 {
-        guard case .started(let tunnelHandle, _) = self.state, let icmpSocketHandle else {
-            throw WireGuardAdapterError.icmpSocketNotOpen
+        dispatchPrecondition(condition: .notOnQueue(workQueue))
+        let tunnelSocketPair = try workQueue.sync {
+            guard case .started(let tunnelHandle, _) = self.state, let icmpSocketHandle else {
+                throw WireGuardAdapterError.icmpSocketNotOpen
+            }
+            return (tunnelHandle, icmpSocketHandle)
         }
-        let result = wgRecvInTunnelPing(tunnelHandle, icmpSocketHandle)
+        let result = wgRecvInTunnelPing(tunnelSocketPair.0, tunnelSocketPair.1)
         if result < 0 {
             try Self.throwError(result: result)
         }
@@ -667,12 +673,15 @@ extension WireGuardAdapter: ICMPPingProvider {
     }
 
     public func sendICMPPing(seqNumber: UInt16) throws {
-        guard case .started(let tunnelHandle, _) = self.state, let icmpSocketHandle else {
-            throw WireGuardAdapterError.icmpSocketNotOpen
+        dispatchPrecondition(condition: .notOnQueue(workQueue))
+        let tunnelSocketPair = try workQueue.sync {
+            guard case .started(let tunnelHandle, _) = self.state, let icmpSocketHandle else {
+                throw WireGuardAdapterError.icmpSocketNotOpen
+            }
+            return (tunnelHandle, icmpSocketHandle)
         }
-        let seq = wgSendInTunnelPing(tunnelHandle, icmpSocketHandle, pingId, 16, seqNumber)
+        let seq = wgSendInTunnelPing(tunnelSocketPair.0, tunnelSocketPair.1, pingId, 16, seqNumber)
         if seq < 0 { try Self.throwError(result: seq) }
-        return
     }
 
     private static func throwError(result: Int32) throws {
