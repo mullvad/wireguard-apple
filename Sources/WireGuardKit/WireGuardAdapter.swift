@@ -234,6 +234,9 @@ public class WireGuardAdapter {
                     settingsGenerator
                 )
 
+                let gatewayAddress = IPv4Address("10.64.0.1")!
+                try self.openICMP(address: gatewayAddress)
+
                 completionHandler(nil)
             } catch let error as WireGuardAdapterError {
                 self.removeDefaultPathObserver()
@@ -272,6 +275,7 @@ public class WireGuardAdapter {
             self.removeDefaultPathObserver()
 
             self.state = .stopped
+            self.closeICMP()
 
             completionHandler(nil)
         }
@@ -333,6 +337,16 @@ public class WireGuardAdapter {
 
                 self.state = .started(handle, settingsGenerator)
 
+                do {
+                    let gatewayAddress = IPv4Address("10.64.0.1")!
+                    try self.openICMP(address: gatewayAddress)
+                } catch let error as WireGuardAdapterError {
+                    completionHandler(error)
+                    return
+                } catch {
+                    self.logHandler(.error, "Failed to open ICMP socket: \(error)")
+                }
+
             case .temporaryShutdown:
                 // On iOS 15.1 or newer, updating network settings may fail when in airplane mode.
                 // Network path monitor will retry updating settings later when connectivity is
@@ -348,6 +362,7 @@ public class WireGuardAdapter {
                 }
 
                 self.state = .temporaryShutdown(settingsGenerator)
+                self.closeICMP()
 
             case .stopped:
                 fatalError()
@@ -454,7 +469,6 @@ public class WireGuardAdapter {
             wgTurnOnMultihop(exitWgConfig, entryWgConfig, privateAddr, tunnelFileDescriptor, daita?.machines ?? nil, daita?.maxEvents ?? 0, daita?.maxActions ?? 0)
         } else {
             wgTurnOnIAN(exitWgConfig, tunnelFileDescriptor, privateAddr, daita?.machines ?? nil, daita?.maxEvents ?? 0, daita?.maxActions ?? 0)
-//            wgTurnOn(exitWgConfig, tunnelFileDescriptor, daita?.machines ?? nil, daita?.maxEvents ?? 0, daita?.maxActions ?? 0)
         }
         if handle < 0 {
             throw WireGuardAdapterError.startWireGuardBackend(handle)
@@ -558,6 +572,7 @@ public class WireGuardAdapter {
                 self.logHandler(.verbose, "Connectivity offline, pausing backend.")
 
                 self.state = .temporaryShutdown(settingsGenerator)
+                self.closeICMP()
                 wgTurnOff(handle)
             }
 
@@ -583,6 +598,9 @@ public class WireGuardAdapter {
                     try self.startWireGuardBackend(exitWgConfig: exitWgConfig, privateAddress: privateAddress, daita: settingsGenerator.daita),
                     settingsGenerator
                 )
+
+                let gatewayAddress = IPv4Address("10.64.0.1")!
+                try self.openICMP(address: gatewayAddress)
             } catch {
                 self.logHandler(.error, "Failed to restart backend: \(error.localizedDescription)")
             }
@@ -599,26 +617,26 @@ public class WireGuardAdapter {
 
 // A protocol encompassing the stateful ICMP ping capabilities of the WireGuardAdapter, decoupling them from its implementation
 public protocol ICMPPingProvider {
-    func openICMP(address: IPv4Address) throws
-
-    func closeICMP()
-
-    @discardableResult func sendICMPPing(seqNumber: UInt16) throws
+    func sendICMPPing(seqNumber: UInt16) throws
     func receiveICMP() throws -> Int32
 }
 
 extension WireGuardAdapter: ICMPPingProvider {
     /// MARK: ICMP Ping functionality
-    public func openICMP(address: IPv4Address) throws {
+    private func openICMP(address: IPv4Address) throws {
         guard case .started(let tunnelHandle, _) = self.state else {
             throw WireGuardAdapterError.invalidState
         }
+
+        // Ignore multiple calls to `openICMP`
+        guard icmpSocketHandle == nil else { return }
+
         // assumption: the description of an IPv4Address will always produce valid ASCII
         let addrString = "\(address)"
         let socket = wgOpenInTunnelICMP(tunnelHandle, addrString)
         if socket < 0 {
             switch socket {
-            case -19: // errInvalidTunnel
+            case -19: // errNoSuchTunnel
                 throw WireGuardAdapterError.noSuchTunnel
                 // this can currently only happen if we have 2^31 sockets, so if it happens, there's a bug somewhere
                 default: throw WireGuardAdapterError.internalError(socket)
@@ -627,7 +645,7 @@ extension WireGuardAdapter: ICMPPingProvider {
         self.icmpSocketHandle = socket
     }
 
-    public func closeICMP() {
+    private func closeICMP() {
         if let icmpSocketHandle {
             wgCloseInTunnelICMP(icmpSocketHandle)
             self.icmpSocketHandle = nil
