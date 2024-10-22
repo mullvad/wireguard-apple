@@ -79,5 +79,6 @@ func addTunnelFromDevice(exitDev *device.Device, entryDev *device.Device, settin
 		}
 	}
 
-	return insertHandle(tunnelHandles, tunnelHandle{exitDev, entryDev, logger, virtualNet})
+	handle := NewTunnelHandle(exitDev, entryDev, logger, virtualNet)
+	return tunnels.Insert(&handle)
 }

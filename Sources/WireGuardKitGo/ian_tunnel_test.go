@@ -45,5 +45,5 @@ func TestPing(t *testing.T) {
 
 	assert.Equal(t, result, int32(1))
 
-	wgCloseInTunnelICMP(pinger)
+	wgCloseInTunnelICMP(tunnel, pinger)
 }

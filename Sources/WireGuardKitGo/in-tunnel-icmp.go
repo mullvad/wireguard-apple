@@ -7,34 +7,33 @@ import (
 
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
+	"golang.zx2c4.com/wireguard/tun/netstack"
 )
 
 //export wgOpenInTunnelICMP
 func wgOpenInTunnelICMP(tunnelHandle int32, address *C.char) int32 {
-	handle, ok := tunnelHandles[tunnelHandle]
-	if !ok {
+	tun := tunnels.Get(tunnelHandle)
+	if tun == nil {
 		return errNoSuchTunnel
 	}
-	if handle.virtualNet == nil {
+
+	if tun.VirtualNet == nil {
 		return errNoTunnelVirtualInterface
 	}
-	conn, _ := handle.virtualNet.Dial("ping4", C.GoString(address))
 
-	result := insertHandle(icmpHandles, icmpHandle{tunnelHandle, conn})
-	if result < 0 {
-		conn.Close()
-	}
-	return result
+	return tun.AddSocket(func(vnet *netstack.Net) (net.Conn, error) {
+		conn, _ := vnet.Dial("ping4", C.GoString(address))
+		return conn, nil
+	})
 }
 
 //export wgCloseInTunnelICMP
-func wgCloseInTunnelICMP(socketHandle int32) bool {
-	socket, ok := icmpHandles[socketHandle]
-	if ok {
-		socket.icmpSocket.Close()
-		delete(icmpHandles, socketHandle)
+func wgCloseInTunnelICMP(tunnelHandle int32, socketHandle int32) bool {
+	tun := tunnels.Get(tunnelHandle)
+	if tun == nil {
+		return false
 	}
-	return ok
+	return tun.RemoveAndCloseSocket(socketHandle)
 }
 
 // returns the sequence number or an error code
@@ -56,16 +55,21 @@ func parsePingResponse(socket net.Conn) int32 {
 }
 
 // This function blocks until the ICMP socket is closed or an ICMP echo-response is received.
+//
 //export wgRecvInTunnelPing
 func wgRecvInTunnelPing(tunnelHandel int32, socketHandle int32) int32 {
-	handle, ok := icmpHandles[socketHandle]
+	tun := tunnels.Get(tunnelHandel)
+	if tun == nil {
+		return errNoSuchTunnel
+	}
+	socket, ok := tun.GetSocket(socketHandle)
 	if !ok {
 		return errICMPOpenSocket
 	}
 
 	for {
 		// Receive ICMP packets until an echo-response is received
-		result := recvInTunnelPing(handle.icmpSocket)
+		result := recvInTunnelPing(socket)
 		// Only break the loop if the error has nothing to do with the ICMP response format.
 		// It should ignore malformed responses and non-echo-responses.
 		if result != errICMPResponseFormat {
@@ -83,7 +87,11 @@ func recvInTunnelPing(ping net.Conn) int32 {
 //
 //export wgSendInTunnelPing
 func wgSendInTunnelPing(tunnelHandle int32, socketHandle int32, pingId uint16, pingSize int, sequenceNumber uint16) int32 {
-	socket, ok := icmpHandles[socketHandle]
+	tun := tunnels.Get(tunnelHandle)
+	if tun == nil {
+		return errNoSuchTunnel
+	}
+	socket, ok := tun.GetSocket(socketHandle)
 	if !ok {
 		return errICMPOpenSocket
 	}
@@ -102,7 +110,7 @@ func wgSendInTunnelPing(tunnelHandle int32, socketHandle int32, pingId uint16, p
 	if err != nil {
 		return errICMPWriteSocket
 	}
-	_, err = socket.icmpSocket.Write(pingBytes)
+	_, err = socket.Write(pingBytes)
 	if err != nil {
 		return errICMPWriteSocket
 	}
