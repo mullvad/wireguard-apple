@@ -64,6 +64,10 @@ const (
 	errNoSuchTunnel
 	// tunnel does not have virtual interface
 	errNoTunnelVirtualInterface
+	// TCP errors
+	errTCPNoSocket
+	errTCPWrite
+	errTCPRead
 )
 
 var loggerFunc unsafe.Pointer

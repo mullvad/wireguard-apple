@@ -21,7 +21,6 @@ func NewTunnelHandles() *tunnelHandles {
 		handles: make(map[int32]*tunnelHandle),
 		lock: sync.Mutex{},
 	}
-
 }
 
 func (h *tunnelHandles) Get(idx int32) *tunnelHandle {
