@@ -21,9 +21,13 @@ extern char *wgGetConfig(int handle);
 extern void wgBumpSockets(int handle);
 extern void wgDisableSomeRoamingForBrokenMobileSemantics(int handle);
 extern int wgOpenInTunnelICMP(int tunnelHandle, const char *address);
-extern int wgCloseInTunnelICMP(int socketHandle);
+extern int wgCloseInTunnelICMP(int tunnelHandle, int socketHandle);
 extern int32_t wgSendInTunnelPing(int tunnelHandle, int socketHandle, uint16_t pingId, int pingSize, uint16_t sequenceNumber);
 extern int32_t wgRecvInTunnelPing(int tunnelHandle, int socketHandle);
+extern int32_t wgOpenInTunnelTCP(int32_t tunnelHandle, const char *address);
+extern int32_t wgCloseInTunnelTCP(int32_t tunnelHandle, int32_t socketHandle);
+extern int32_t wgRecvInTunnelTCP(int32_t tunnelHandle, int32_t socketHandle, const char *data, int len);
+extern int32_t wgWriteInTunnelTCP(int32_t tunnelHandle, int32_t socketHandle, const char *data, int len);
 extern const char *wgVersion();
 
 #endif
