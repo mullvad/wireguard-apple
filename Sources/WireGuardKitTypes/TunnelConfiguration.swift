@@ -2,16 +2,19 @@
 // Copyright © 2018-2023 WireGuard LLC. All Rights Reserved.
 
 import Foundation
+import Network
 
 public final class TunnelConfiguration {
     public var name: String?
     public var interface: InterfaceConfiguration
     public let peers: [PeerConfiguration]
+    public let pingableGateway: IPv4Address?
 
-    public init(name: String?, interface: InterfaceConfiguration, peers: [PeerConfiguration]) {
+    public init(name: String?, interface: InterfaceConfiguration, peers: [PeerConfiguration], pingableGateway: IPv4Address? = nil) {
         self.interface = interface
         self.peers = peers
         self.name = name
+        self.pingableGateway = pingableGateway
 
         let peerPublicKeysArray = peers.map { $0.publicKey }
         let peerPublicKeysSet = Set<PublicKey>(peerPublicKeysArray)

@@ -18,7 +18,10 @@ func wgOpenInTunnelICMP(tunnelHandle int32, address *C.char) int32 {
 	if handle.virtualNet == nil {
 		return errNoTunnelVirtualInterface
 	}
-	conn, _ := handle.virtualNet.Dial("ping4", C.GoString(address))
+	conn, err := handle.virtualNet.Dial("ping4", C.GoString(address))
+	if err != nil {
+		return errICMPOpenSocket
+	}
 
 	result := insertHandle(icmpHandles, icmpHandle{tunnelHandle, conn})
 	if result < 0 {
