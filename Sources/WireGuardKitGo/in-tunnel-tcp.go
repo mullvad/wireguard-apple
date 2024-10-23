@@ -34,6 +34,11 @@ func wgCloseInTunnelTCP(tunnelHandle int32, socketHandle int32) bool {
 	return tun.RemoveAndCloseSocket(socketHandle)
 }
 
+// Sends the data array into the TCP socket in a blocking fashion. The data
+// pointer should point to at least `dataLen` bytes for the entirety of this
+// call. This function is technically threadsafe, but multiple calls will not
+// have a defined order, which can lead to unordered writes.
+//
 // wgSendInTunnelTCP
 func wgSendInTunnelTCP(tunnelHandle int32, socketHandle int32, data *byte, dataLen int) int32 {
 	tun := tunnels.Get(tunnelHandle)
@@ -60,7 +65,9 @@ func wgSendInTunnelTCP(tunnelHandle int32, socketHandle int32, data *byte, dataL
 	return 0
 }
 
-// Blocking call to receive bytes into the buffer from a TCP connection.
+// Blocking call to receive bytes into the buffer from a TCP connection. The
+// `data` pointer should point to at least `dataLen` bytes, and be valid until
+// this call returns. 
 // export wgRecvInTunnelTCP
 func wgRecvInTunnelTCP(tunnelHandle int32, socketHandle int32, data *byte, dataLen int) int32 {
 	tun := tunnels.Get(tunnelHandle)

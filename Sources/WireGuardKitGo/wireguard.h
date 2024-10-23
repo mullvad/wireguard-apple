@@ -27,7 +27,7 @@ extern int32_t wgRecvInTunnelPing(int tunnelHandle, int socketHandle);
 extern int32_t wgOpenInTunnelTCP(int32_t tunnelHandle, const char *address);
 extern int32_t wgCloseInTunnelTCP(int32_t tunnelHandle, int32_t socketHandle);
 extern int32_t wgRecvInTunnelTCP(int32_t tunnelHandle, int32_t socketHandle, const char *data, int len);
-extern int32_t wgWriteInTunnelTCP(int32_t tunnelHandle, int32_t socketHandle, const char *data, int len);
+extern int32_t wgSendInTunnelTCP(int32_t tunnelHandle, int32_t socketHandle, const char *data, int len);
 extern const char *wgVersion();
 
 #endif
