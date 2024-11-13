@@ -5,12 +5,21 @@
 
 package main
 
+// #include <stdint.h>
 // #include <stdlib.h>
 // #include <sys/types.h>
 // static void callLogger(void *func, void *ctx, int level, const char *msg)
 // {
 // 	((void(*)(void *, int, const char *))func)(ctx, level, msg);
 // }
+/*
+typedef struct {
+    uint32_t maybeNotMaxEvents;
+    uint32_t maybeNotMaxActions;
+    double maybeNotMaxPadding;
+    double maybeNotMaxBlocking;
+} DaitaGoParameters;
+*/
 import "C"
 
 import (
@@ -91,6 +100,24 @@ func (l CLogger) Printf(format string, args ...interface{}) {
 
 var tunnels = NewTunnelHandles()
 
+type daitaParameters struct {
+	MaybeNotMachines    string
+	MaybeNotMaxEvents   uint32
+	MaybeNotMaxActions  uint32
+	MaybeNotMaxPadding  float64
+	MaybeNotMaxBlocking float64
+}
+
+func daitaParametersFromRaw(maybeNotMachines *C.char, p *C.DaitaGoParameters) daitaParameters {
+	return daitaParameters{
+		MaybeNotMachines:    C.GoString(maybeNotMachines),
+		MaybeNotMaxEvents:   uint32(p.maybeNotMaxEvents),
+		MaybeNotMaxActions:  uint32(p.maybeNotMaxActions),
+		MaybeNotMaxPadding:  float64(p.maybeNotMaxPadding),
+		MaybeNotMaxBlocking: float64(p.maybeNotMaxBlocking),
+	}
+}
+
 var rng = rand.New(rand.NewSource(time.Now().UnixNano()))
 
 func init() {
@@ -137,7 +164,25 @@ func parseFirstPubkeyFromConfig(config string) *device.NoisePublicKey {
 	return nil
 }
 
-func wgTurnOnMultihopInner(tun tun.Device, exitSettings *C.char, entrySettings *C.char, privateIp *C.char, exitMtu int, logger *device.Logger, maybeNotMachines *C.char, maybeNotMaxEvents uint32, maybeNotMaxActions uint32) int32 {
+//export test_daita
+func test_daita(context *C.DaitaGoParameters) {
+	logger := &device.Logger{
+		Verbosef: CLogger(0).Printf,
+		Errorf:   CLogger(1).Printf,
+	}
+	logger.Errorf("test %s", context)
+
+	testParams := C.DaitaGoParameters{
+		maybeNotMaxEvents:   1,
+		maybeNotMaxActions:  1,
+		maybeNotMaxPadding:  0.42,
+		maybeNotMaxBlocking: 0.24,
+	}
+
+	logger.Errorf("test %p", &testParams)
+}
+
+func wgTurnOnMultihopInner(tun tun.Device, exitSettings *C.char, entrySettings *C.char, privateIp *C.char, exitMtu int, logger *device.Logger, maybeNotMachines *C.char, daitaParameters *C.DaitaGoParameters) int32 {
 	ip, err := netip.ParseAddr(C.GoString(privateIp))
 	if err != nil {
 		logger.Errorf("Failed to parse private IP: %v", err)
@@ -170,11 +215,12 @@ func wgTurnOnMultihopInner(tun tun.Device, exitSettings *C.char, entrySettings *
 	wrapper := NewRouter(tun, vtun)
 	exitDev := device.NewDevice(&wrapper, singletun.Binder(), logger)
 
-	return addTunnelFromDevice(exitDev, entryDev, exitConfigString, entryConfigString, virtualNet, logger, maybeNotMachines, maybeNotMaxEvents, maybeNotMaxActions)
+	daitaParams := daitaParametersFromRaw(maybeNotMachines, daitaParameters)
+	return addTunnelFromDevice(exitDev, entryDev, exitConfigString, entryConfigString, virtualNet, logger, daitaParams)
 }
 
 //export wgTurnOnMultihop
-func wgTurnOnMultihop(exitSettings *C.char, entrySettings *C.char, privateIp *C.char, tunFd int32, maybenotMachines *C.char, maybeNotMaxEvents uint32, maybeNotMaxActons uint32) int32 {
+func wgTurnOnMultihop(exitSettings *C.char, entrySettings *C.char, privateIp *C.char, tunFd int32, maybenotMachines *C.char, daitaParameters *C.DaitaGoParameters) int32 {
 	logger := &device.Logger{
 		Verbosef: CLogger(0).Printf,
 		Errorf:   CLogger(1).Printf,
@@ -191,11 +237,11 @@ func wgTurnOnMultihop(exitSettings *C.char, entrySettings *C.char, privateIp *C.
 		return errGetMtu
 	}
 
-	return wgTurnOnMultihopInner(tun, exitSettings, entrySettings, privateIp, exitMtu, logger, maybenotMachines, maybeNotMaxEvents, maybeNotMaxActons)
+	return wgTurnOnMultihopInner(tun, exitSettings, entrySettings, privateIp, exitMtu, logger, maybenotMachines, daitaParameters)
 }
 
 //export wgTurnOn
-func wgTurnOn(settings *C.char, tunFd int32, maybeNotMachines *C.char, maybeNotMaxEvents uint32, maybeNotMaxActions uint32) int32 {
+func wgTurnOn(settings *C.char, tunFd int32, maybeNotMachines *C.char, daitaParameters *C.DaitaGoParameters) int32 {
 	logger := &device.Logger{
 		Verbosef: CLogger(0).Printf,
 		Errorf:   CLogger(1).Printf,
@@ -209,10 +255,11 @@ func wgTurnOn(settings *C.char, tunFd int32, maybeNotMachines *C.char, maybeNotM
 	logger.Verbosef("Attaching to interface")
 	dev := device.NewDevice(tun, conn.NewStdNetBind(), logger)
 
-	return addTunnelFromDevice(dev, nil, C.GoString(settings), "", nil, logger, maybeNotMachines, maybeNotMaxEvents, maybeNotMaxActions)
+	daitaParams := daitaParametersFromRaw(maybeNotMachines, daitaParameters)
+	return addTunnelFromDevice(dev, nil, C.GoString(settings), "", nil, logger, daitaParams)
 }
 
-func wgTurnOnIANFromExistingTunnel(tun tun.Device, settings string, privateAddr netip.Addr, maybeNotMachines *C.char, maybeNotMaxEvents uint32, maybeNotMaxActions uint32) int32 {
+func wgTurnOnIANFromExistingTunnel(tun tun.Device, settings string, privateAddr netip.Addr, daitaParameters daitaParameters) int32 {
 	logger := &device.Logger{
 		Verbosef: CLogger(0).Printf,
 		Errorf:   CLogger(1).Printf,
@@ -236,11 +283,11 @@ func wgTurnOnIANFromExistingTunnel(tun tun.Device, settings string, privateAddr 
 	logger.Verbosef("Attaching to interface")
 	dev := device.NewDevice(&wrapper, conn.NewStdNetBind(), logger)
 
-	return addTunnelFromDevice(dev, nil, settings, "", virtualNet, logger, maybeNotMachines, maybeNotMaxEvents, maybeNotMaxActions) // FIXME
+	return addTunnelFromDevice(dev, nil, settings, "", virtualNet, logger, daitaParameters)
 }
 
 //export wgTurnOnIAN
-func wgTurnOnIAN(settings *C.char, tunFd int32, privateIP *C.char, maybeNotMachines *C.char, maybeNotMaxEvents uint32, maybeNotMaxActions uint32) int32 {
+func wgTurnOnIAN(settings *C.char, tunFd int32, privateIP *C.char, maybeNotMachines *C.char, daitaParameters *C.DaitaGoParameters) int32 {
 	logger := &device.Logger{
 		Verbosef: CLogger(0).Printf,
 		Errorf:   CLogger(1).Printf,
@@ -258,7 +305,8 @@ func wgTurnOnIAN(settings *C.char, tunFd int32, privateIP *C.char, maybeNotMachi
 		return errCode
 	}
 
-	return wgTurnOnIANFromExistingTunnel(tun, C.GoString(settings), privateAddr, maybeNotMachines, maybeNotMaxEvents, maybeNotMaxActions)
+	daitaParams := daitaParametersFromRaw(maybeNotMachines, daitaParameters)
+	return wgTurnOnIANFromExistingTunnel(tun, C.GoString(settings), privateAddr, daitaParams)
 }
 
 //export wgTurnOff
@@ -329,7 +377,7 @@ func wgVersion() *C.char {
 	return C.CString("unknown")
 }
 
-func configureDaita(device *device.Device, config string, machines string, maxEvents uint32, maxActions uint32) int32 {
+func configureDaita(device *device.Device, config string, daitaParameters daitaParameters) int32 {
 	entryPeerPubkey := parseFirstPubkeyFromConfig(config)
 	if entryPeerPubkey == nil {
 		return errBadEntryConfig
@@ -339,10 +387,7 @@ func configureDaita(device *device.Device, config string, machines string, maxEv
 		return errNoPeer
 	}
 
-	const maxPaddingBytes = 0.0
-	const maxBlockingBytes = 0.0
-
-	if !peer.EnableDaita(machines, uint(maxEvents), uint(maxActions), maxPaddingBytes, maxBlockingBytes) {
+	if !peer.EnableDaita(daitaParameters.MaybeNotMachines, uint(daitaParameters.MaybeNotMaxEvents), uint(daitaParameters.MaybeNotMaxActions), daitaParameters.MaybeNotMaxPadding, daitaParameters.MaybeNotMaxPadding) {
 		return errEnableDaita
 	}
 

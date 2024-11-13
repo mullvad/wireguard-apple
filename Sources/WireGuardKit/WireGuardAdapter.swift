@@ -472,12 +472,13 @@ public class WireGuardAdapter {
             throw WireGuardAdapterError.cannotLocateTunnelFileDescriptor
         }
 
+        var params = DaitaGoParameters(daita: daita)
         let privateAddr = "\(privateAddress)"
 
         let handle = if let entryWgConfig {
-            wgTurnOnMultihop(exitWgConfig, entryWgConfig, privateAddr, tunnelFileDescriptor, daita?.machines ?? nil, daita?.maxEvents ?? 0, daita?.maxActions ?? 0)
+            wgTurnOnMultihop(exitWgConfig, entryWgConfig, privateAddr, tunnelFileDescriptor, daita?.machines ?? nil, &params)
         } else {
-            wgTurnOnIAN(exitWgConfig, tunnelFileDescriptor, privateAddr, daita?.machines ?? nil, daita?.maxEvents ?? 0, daita?.maxActions ?? 0)
+            wgTurnOnIAN(exitWgConfig, tunnelFileDescriptor, privateAddr, daita?.machines ?? nil, &params)
         }
         if handle < 0 {
             throw WireGuardAdapterError.startWireGuardBackend(handle)
@@ -737,5 +738,15 @@ extension NetworkExtension.NWPathStatus: CustomDebugStringConvertible {
         @unknown default:
             return "unknown (rawValue = \(rawValue))"
         }
+    }
+}
+
+extension DaitaGoParameters {
+    init(daita: DaitaConfiguration?) {
+        self = DaitaGoParameters()
+        maybeNotMaxEvents = daita?.maxEvents ?? 0
+        maybeNotMaxActions = daita?.maxActions ?? 0
+        maybeNotMaxPadding = daita?.maxPadding ?? 0
+        maybeNotMaxBlocking = daita?.maxBlocking ?? 0
     }
 }

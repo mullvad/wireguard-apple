@@ -12,12 +12,12 @@ import (
 )
 
 // Test validates the TCP FFI interface by doing the following:
-// 1. Setting up two (`a` and `b`) WireGuard devices, both being replace_peers
-// 2. a listening socket is created using the virtual networking stack directly
-//	 on the `b` device
-// 3. using the FFI interface with `a` device to connect to said listening socket
-// 4. using the FFI interface with `a` device, send data to `b` listener
-// 5. using the FFI interface with `a` device, receive the same data back
+//  1. Setting up two (`a` and `b`) WireGuard devices, both being replace_peers
+//  2. a listening socket is created using the virtual networking stack directly
+//     on the `b` device
+//  3. using the FFI interface with `a` device to connect to said listening socket
+//  4. using the FFI interface with `a` device, send data to `b` listener
+//  5. using the FFI interface with `a` device, receive the same data back
 //
 // Ultimately, this tests the same interface that will be used by the main app to
 // negotiate ephemeral peers with relays.
@@ -35,7 +35,11 @@ func TestInTunnelTCP(t *testing.T) {
 	aConfig := configs[0] + endpointConfigs[0]
 	bConfig := configs[1] + endpointConfigs[1]
 
-	tunnel := wgTurnOnIANFromExistingTunnel(a, aConfig, aIp, nil, 0, 0)
+	daita := daitaParameters{
+		"", 0, 0, 0, 0,
+	}
+
+	tunnel := wgTurnOnIANFromExistingTunnel(a, aConfig, aIp, daita)
 
 	bDev := device.NewDevice(b, conn.NewStdNetBind(), device.NewLogger(device.LogLevelSilent, ""))
 
@@ -105,8 +109,11 @@ func TestInTunnelTCPShutdown(t *testing.T) {
 	configs, endpointConfigs := genConfigs(t)
 	aConfig := configs[0] + endpointConfigs[0]
 
-	tunnel := wgTurnOnIANFromExistingTunnel(a, aConfig, aIp, nil, 0, 0)
+	daita := daitaParameters{
+		"", 0, 0, 0, 0,
+	}
 
+	tunnel := wgTurnOnIANFromExistingTunnel(a, aConfig, aIp, daita)
 
 	remoteAddr := "1.2.3.5:9090"
 	// Opening connections that go nowhere must not block the shutdown of a tunnel
