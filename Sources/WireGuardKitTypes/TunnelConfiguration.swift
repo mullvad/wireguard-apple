@@ -41,10 +41,16 @@ public struct DaitaConfiguration: Equatable {
     public let maxEvents: UInt32
     /// Maximum amount of DAITA actions to enqueue at any given time.
     public let maxActions: UInt32
+    /// Maximum amount of DAITA padding to enqueue at any given time.
+    public let maxPadding: Double
+    /// Maximum amount of DAITA blocking to enqueue at any given time.
+    public let maxBlocking: Double
 
-    public init(machines: String, maxEvents: UInt32, maxActions: UInt32) {
+    public init(machines: String, maxEvents: UInt32, maxActions: UInt32, maxPadding: Double, maxBlocking: Double) {
         self.machines = machines
         self.maxEvents = maxEvents
         self.maxActions = maxActions
+        self.maxPadding = maxPadding
+        self.maxBlocking = maxBlocking
     }
 }

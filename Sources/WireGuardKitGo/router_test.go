@@ -602,7 +602,9 @@ func getFreeLocalUdpPort(t testing.TB) uint16 {
 func TestRapidShutdown(t *testing.T) {
 	configs, endpointConfigs := genConfigs(t)
 	aConfig := configs[0] + endpointConfigs[0]
-
+	daita := daitaParameters{
+		"", 0, 0, 0, 0,
+	}
 
 	remoteAddr := "1.2.3.5:9090"
 
@@ -610,7 +612,7 @@ func TestRapidShutdown(t *testing.T) {
 	for i := 0; i < 3000; i += 1 {
 		aIp := netip.AddrFrom4([4]byte{1, 2, 3, 4})
 		a, _, _ := netstack.CreateNetTUN([]netip.Addr{aIp}, []netip.Addr{}, 1280)
-		tunnel := wgTurnOnIANFromExistingTunnel(a, aConfig, aIp, nil, 0, 0)
+		tunnel := wgTurnOnIANFromExistingTunnel(a, aConfig, aIp, daita)
 		_ = wgOpenInTunnelTCP(tunnel, cstring(remoteAddr), 1)
 		wgTurnOff(tunnel)
 	}
