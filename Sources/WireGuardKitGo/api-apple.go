@@ -18,7 +18,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math/rand"
-	"net"
 	"net/netip"
 	"os"
 	"os/signal"
@@ -37,37 +36,36 @@ import (
 )
 
 const (
-	_              = iota
-	errBadIPString = -iota
-	errDup
-	errSetNonblock
-	errCreateTun
-	errCreateVirtualTun
-	errNoVirtualNet
-	errBadWgConfig
-	errDeviceLimitHit
-	errGetMtu
-	errNoEndpointInConfig
+	errBadIPString        = -1
+	errDup                = -2
+	errSetNonblock        = -3
+	errCreateTun          = -4
+	errCreateVirtualTun   = -5
+	errNoVirtualNet       = -6
+	errBadWgConfig        = -7
+	errDeviceLimitHit     = -8
+	errGetMtu             = -9
+	errNoEndpointInConfig = -10
 	// Configuration for a given device contains no peers. It is peerless.
-	errBadEntryConfig
+	errBadEntryConfig = -11
 	// After applying a configuration to a given WireGuard device, it fails to return a peer it was configured to have.
-	errNoPeer
+	errNoPeer = -12
 	// Failed to enable DAITA
-	errEnableDaita
+	errEnableDaita = -13
 	// ICMP errors
-	errICMPOpenSocket
-	errICMPWriteSocket
-	errICMPReadSocket
-	errICMPResponseFormat
-	errICMPResponseContent
+	errICMPOpenSocket      = -14
+	errICMPWriteSocket     = -15
+	errICMPReadSocket      = -16
+	errICMPResponseFormat  = -17
+	errICMPResponseContent = -18
 	// no such tunnel exists
-	errNoSuchTunnel
+	errNoSuchTunnel = -19
 	// tunnel does not have virtual interface
-	errNoTunnelVirtualInterface
+	errNoTunnelVirtualInterface = -20
 	// TCP errors
-	errTCPNoSocket
-	errTCPWrite
-	errTCPRead
+	errTCPNoSocket = -21
+	errTCPWrite    = -22
+	errTCPRead     = -23
 )
 
 var loggerFunc unsafe.Pointer
@@ -91,12 +89,6 @@ func (l CLogger) Printf(format string, args ...interface{}) {
 	C.callLogger(loggerFunc, loggerCtx, C.int(l), cstring(fmt.Sprintf(format, args...)))
 }
 
-type socketHandle struct {
-	tunnelHandle int32
-	icmpSocket   net.Conn
-}
-
-// var tunnelHandles = make(map[int32]tunnelHandle)
 var tunnels = NewTunnelHandles()
 
 var rng = rand.New(rand.NewSource(time.Now().UnixNano()))

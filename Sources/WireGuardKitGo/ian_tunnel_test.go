@@ -36,12 +36,12 @@ func TestPing(t *testing.T) {
 		pingResultChan <- result
 	}()
 
-	result := wgSendInTunnelPing(tunnel, pinger,  123, 24, 1)
+	result := wgSendInTunnelPing(tunnel, pinger, 123, 24, 1)
 	if result < 0 {
 		t.Fatalf("Failed to send in tunnel ping")
 	}
 
-	result = <- pingResultChan
+	result = <-pingResultChan
 
 	assert.Equal(t, result, int32(1))
 

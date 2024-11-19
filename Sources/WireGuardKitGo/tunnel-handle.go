@@ -3,8 +3,10 @@ package main
 import "C"
 
 import (
+	"context"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.zx2c4.com/wireguard/device"
@@ -19,7 +21,7 @@ type tunnelHandles struct {
 func NewTunnelHandles() *tunnelHandles {
 	return &tunnelHandles{
 		handles: make(map[int32]*tunnelHandle),
-		lock: sync.Mutex{},
+		lock:    sync.Mutex{},
 	}
 }
 
@@ -52,7 +54,7 @@ type tunnelHandle struct {
 	entry         *device.Device
 	logger        *device.Logger
 	VirtualNet    *netstack.Net
-	socketHandles map[int32]net.Conn
+	socketHandles map[int32]*socketHandle
 	lock          *sync.Mutex
 }
 
@@ -62,7 +64,7 @@ func NewTunnelHandle(exit *device.Device, entry *device.Device, logger *device.L
 		entry:         entry,
 		logger:        logger,
 		VirtualNet:    virtualNet,
-		socketHandles: make(map[int32]net.Conn),
+		socketHandles: make(map[int32]*socketHandle),
 		lock:          &sync.Mutex{},
 	}
 }
@@ -115,31 +117,36 @@ func (tun *tunnelHandle) DisableSomeRoamingForBrokenMobileSemantics() {
 	}
 }
 
-// Takes a closure that creates a socket. If the handle fails to be stored, the
-// socket will be closed. Adds an associated socket to the tunnel handle. The
-// caller is responsible for binding the socket via `VirtualNet`. Returns a -1
-// if failed to create a socket. Returns a `errDeviceLimitHit` if too many
-// sockets are open already.
-func (tun *tunnelHandle) AddSocket(createSocket func(virtualNet *netstack.Net)(net.Conn, error)) int32 {
+// Creates a socket asynchronously and returns an index immediately. Calls to
+// get the socket will block until the passed in closure returns.
+func (tun *tunnelHandle) AddSocket(ctx context.Context, createSocket func(ctx context.Context, virtualNet *netstack.Net) (net.Conn, error)) int32 {
 	tun.lock.Lock()
 	defer tun.lock.Unlock()
-	socket, err := createSocket(tun.VirtualNet)
-	if err != nil {
-		return -1
-	}
-	handle := insertHandle(tun.socketHandles, socket)
+
+	socketHandle := newSocketHandle(tun.VirtualNet, ctx, createSocket)
+	handle := insertHandle(tun.socketHandles, socketHandle)
+	// Whilst technically we could try getting an unused index into the map
+	// before creating a handle, it is far too unlikely that we will run out of
+	// int32 handles that the incurred mess of that is not worth it.
 	if handle < 0 {
-		socket.Close()
+		socketHandle.close()
 	}
 	return handle
 }
 
-// Returns a socket bound to the virtual network
-func (tun *tunnelHandle) GetSocket(id int32) (net.Conn, bool) {
+// Returns a socket bound to the virtual network. Blocks until socket is connected.
+func (tun *tunnelHandle) GetSocket(id int32) (net.Conn, error, bool) {
 	tun.lock.Lock()
-	defer tun.lock.Unlock()
 	socket, ok := tun.socketHandles[id]
-	return socket, ok
+	tun.lock.Unlock()
+
+	if !ok {
+		return nil, nil, false
+	}
+
+	conn, err := socket.Get()
+
+	return conn, err, true
 }
 
 func (tun *tunnelHandle) RemoveAndCloseSocket(id int32) bool {
@@ -147,7 +154,7 @@ func (tun *tunnelHandle) RemoveAndCloseSocket(id int32) bool {
 	defer tun.lock.Unlock()
 	socket, ok := tun.socketHandles[id]
 	if ok {
-		socket.Close()
+		socket.close()
 	}
 
 	delete(tun.socketHandles, id)
@@ -158,13 +165,68 @@ func (tun *tunnelHandle) Close() {
 	tun.lock.Lock()
 	defer tun.lock.Unlock()
 
+
 	for _, socket := range tun.socketHandles {
-		socket.Close()
+		socket.close()
 	}
 
-	tun.socketHandles = make(map[int32]net.Conn)
+	tun.socketHandles = make(map[int32]*socketHandle)
 	tun.exit.Close()
 	if tun.entry != nil {
 		tun.entry.Close()
 	}
+}
+
+type socketHandle struct {
+	initializingLock *sync.Mutex
+	conn             net.Conn
+	connError        error
+	shutdown         atomic.Bool
+	cancelFunc       func()
+}
+
+func newSocketHandle(vnet *netstack.Net, ctx context.Context, createSocket func(ctx context.Context, virtualNet *netstack.Net) (net.Conn, error)) *socketHandle {
+	ctx, cancelFunc := context.WithCancel(ctx)
+	handle := &socketHandle{
+		initializingLock: &sync.Mutex{},
+		conn:             nil,
+		connError:        nil,
+		shutdown:         atomic.Bool{},
+		cancelFunc:       cancelFunc,
+	}
+
+	handle.initializingLock.Lock()
+	go func() {
+		defer handle.initializingLock.Unlock()
+		conn, err := createSocket(ctx, vnet)
+		cancelFunc()
+		// If handle is already shut down, no reason to store anything anywhere.
+		// If anything leaks, whenever the tunnel is shut down, all of it will be
+		// cleaned up anyway.
+		if handle.shutdown.Load() {
+			return
+		}
+		if err != nil {
+			handle.connError = err
+		} else {
+			handle.conn = conn
+		}
+	}()
+
+	return handle
+}
+
+func (handle *socketHandle) close() {
+	handle.shutdown.Store(true)
+	handle.cancelFunc()
+	handle.initializingLock.Lock() 
+	if handle.conn != nil {
+		handle.conn.Close()
+	}
+}
+
+func (handle *socketHandle) Get() (net.Conn, error) {
+	handle.initializingLock.Lock()
+	defer handle.initializingLock.Unlock()
+	return handle.conn, handle.connError
 }

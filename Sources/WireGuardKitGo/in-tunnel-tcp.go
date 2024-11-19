@@ -28,14 +28,14 @@ func wgOpenInTunnelTCP(tunnelHandle int32, address *C.char, timeout uint64) int3
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
-	defer cancel()
 
-	return tun.AddSocket(func(vnet *netstack.Net) (net.Conn, error) {
-		var connection net.Conn
-		var err error
-		connection, err = vnet.DialContextTCPAddrPort(ctx, netAddr)
+	connectTcpSocket := func(ctx context.Context, vnet *netstack.Net) (net.Conn, error) {
+		connection, err := vnet.DialContextTCPAddrPort(ctx, netAddr)
+		cancel()
 		return connection, err
-	})
+	}
+
+	return tun.AddSocket(ctx, connectTcpSocket)
 }
 
 //export wgCloseInTunnelTCP
@@ -60,10 +60,16 @@ func wgSendInTunnelTCP(tunnelHandle int32, socketHandle int32, data *byte, dataL
 		return errNoSuchTunnel
 	}
 
-	socket, ok := tun.GetSocket(socketHandle)
+	socket, err, ok := tun.GetSocket(socketHandle)
 	if !ok {
 		return errTCPNoSocket
 	}
+	if err != nil {
+		tun.logger.Errorf("Failed to open TCP socket: %s", err)
+		tun.RemoveAndCloseSocket(socketHandle)
+		return errTCPNoSocket
+	}
+
 	byteBuffer := C.GoBytes(unsafe.Pointer(data), C.int(dataLen))
 
 	n, err := socket.Write(byteBuffer)
@@ -81,7 +87,8 @@ func wgSendInTunnelTCP(tunnelHandle int32, socketHandle int32, data *byte, dataL
 
 // Blocking call to receive bytes into the buffer from a TCP connection. The
 // `data` pointer should point to at least `dataLen` bytes, and be valid until
-// this call returns. 
+// this call returns.
+//
 //export wgRecvInTunnelTCP
 func wgRecvInTunnelTCP(tunnelHandle int32, socketHandle int32, data *byte, dataLen int32) int32 {
 	tun := tunnels.Get(tunnelHandle)
@@ -89,10 +96,17 @@ func wgRecvInTunnelTCP(tunnelHandle int32, socketHandle int32, data *byte, dataL
 		return errNoSuchTunnel
 	}
 
-	socket, ok := tun.GetSocket(socketHandle)
+	socket, err, ok := tun.GetSocket(socketHandle)
 	if !ok {
 		return errTCPNoSocket
 	}
+
+	if err != nil {
+		tun.logger.Errorf("Failed to open TCP socket: %s", err)
+		tun.RemoveAndCloseSocket(socketHandle)
+		return errTCPNoSocket
+	}
+
 	byteBuffer := unsafe.Slice(data, dataLen)
 
 	n, err := socket.Read(byteBuffer)

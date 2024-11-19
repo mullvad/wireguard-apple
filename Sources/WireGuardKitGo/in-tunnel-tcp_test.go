@@ -59,7 +59,7 @@ func TestInTunnelTCP(t *testing.T) {
 	}
 	result := wgSendInTunnelTCP(tunnel, tcpClient, unsafe.SliceData(sendSlice), int32(len(sendSlice)))
 	if result < 0 {
-		t.Fatalf("Failed to send in tunnel TCP data")
+		t.Fatalf("Failed to send in tunnel TCP data: %d", result)
 	}
 
 	recvSlice := make([]byte, 1024)
@@ -88,12 +88,10 @@ func TestInTunnelTCPShutdown(t *testing.T) {
 
 
 	remoteAddr := "1.2.3.5:9090"
-
+	// Opening connections that go nowhere must not block the shutdown of a tunnel
 	for i := 0; i < 10; i += 1 {
-		// Opening connections that go nowhere must not block the shutdown of a tunnel
 		_ = wgOpenInTunnelTCP(tunnel, cstring(remoteAddr), 5)
 	}
-
 
 	wgTurnOff(tunnel)
 }

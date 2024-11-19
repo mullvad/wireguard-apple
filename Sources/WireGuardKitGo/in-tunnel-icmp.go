@@ -3,7 +3,9 @@ package main
 import "C"
 
 import (
+	"context"
 	"net"
+	"strings"
 
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
@@ -11,20 +13,23 @@ import (
 )
 
 //export wgOpenInTunnelICMP
-func wgOpenInTunnelICMP(tunnelHandle int32, address *C.char) int32 {
+func wgOpenInTunnelICMP(tunnelHandle int32, addressPtr *C.char) int32 {
 	tun := tunnels.Get(tunnelHandle)
 	if tun == nil {
 		return errNoSuchTunnel
 	}
+	address := strings.Clone(C.GoString(addressPtr))
 
 	if tun.VirtualNet == nil {
 		return errNoTunnelVirtualInterface
 	}
 
-	return tun.AddSocket(func(vnet *netstack.Net) (net.Conn, error) {
-		conn, _ := vnet.Dial("ping4", C.GoString(address))
-		return conn, nil
-	})
+	createIcmpSocket := func(ctx context.Context, vnet *netstack.Net) (net.Conn, error) {
+		conn, err := vnet.DialContext(ctx, "ping4", address)
+		return conn, err
+	}
+
+	return tun.AddSocket(context.Background(), createIcmpSocket)
 }
 
 //export wgCloseInTunnelICMP
@@ -33,6 +38,7 @@ func wgCloseInTunnelICMP(tunnelHandle int32, socketHandle int32) bool {
 	if tun == nil {
 		return false
 	}
+
 	return tun.RemoveAndCloseSocket(socketHandle)
 }
 
@@ -62,8 +68,12 @@ func wgRecvInTunnelPing(tunnelHandel int32, socketHandle int32) int32 {
 	if tun == nil {
 		return errNoSuchTunnel
 	}
-	socket, ok := tun.GetSocket(socketHandle)
+	socket, err, ok := tun.GetSocket(socketHandle)
 	if !ok {
+		return errICMPOpenSocket
+	}
+	if err != nil {
+		tun.RemoveAndCloseSocket(socketHandle)
 		return errICMPOpenSocket
 	}
 
@@ -86,17 +96,24 @@ func recvInTunnelPing(ping net.Conn) int32 {
 // This function can be called concurrently.
 //
 //export wgSendInTunnelPing
-func wgSendInTunnelPing(tunnelHandle int32, socketHandle int32, pingId uint16, pingSize int, sequenceNumber uint16) int32 {
+func wgSendInTunnelPing(tunnelHandle int32, socketHandle int32, pingId uint16, pingSize int32, sequenceNumber uint16) int32 {
 	tun := tunnels.Get(tunnelHandle)
 	if tun == nil {
 		return errNoSuchTunnel
 	}
-	socket, ok := tun.GetSocket(socketHandle)
+	socket, err, ok := tun.GetSocket(socketHandle)
 	if !ok {
 		return errICMPOpenSocket
 	}
+
+	if err != nil {
+		tun.logger.Errorf("Failed to open ICMP socket: %s", err)
+		tun.RemoveAndCloseSocket(socketHandle)
+		return errICMPOpenSocket
+	}
+
 	pingdata := make([]byte, pingSize)
-	_, err := rng.Read(pingdata)
+	_, _ = rng.Read(pingdata)
 
 	ping := icmp.Message{
 		Type: ipv4.ICMPTypeEcho,
