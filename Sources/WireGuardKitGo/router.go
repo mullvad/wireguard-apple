@@ -195,12 +195,6 @@ func (r *Router) Read(bufs []byte, offset int) (n int, err error) {
 	case _, _ = <-r.read.rxShutdown:
 		return 0, io.EOF
 	case batch, ok = <-r.read.rxChannel:
-		defer func() {
-			// Avoid reading nil values if a read happens after rxChannel is closed
-			if batch != nil {
-				batch.completion <- batch
-			}
-		}()
 		if !ok {
 			return 0, errors.New("reader shut down")
 		}
@@ -210,6 +204,12 @@ func (r *Router) Read(bufs []byte, offset int) (n int, err error) {
 	packet := batch.packet
 
 	copy(bufs[offset:], packet)
+	// important to unblock the underlying reader.
+	select {
+	case _, _ = <-r.read.rxShutdown:
+		return 0, io.EOF
+	case batch.completion <- batch:
+	}
 
 	if batch.isVirtual && fillPacketHeaderData(bufs[offset:], &headerData, false) {
 		r.read.setVirtualRoute(headerData)
@@ -280,17 +280,24 @@ func (r *routerRead) readWorker(device tun.Device, isVirtual bool) {
 			}
 			return
 		}
+
 		batch.packet = batch.packet[defaultOffset : n+defaultOffset]
 		batch.isVirtual = isVirtual
+		// Submitting read from virtual device to router
 		select {
 		case _, _ = <-r.rxShutdown:
 			return
 		case r.rxChannel <- batch:
 		}
+
+		// Waiting for router to finish the submitted read
 		select {
 		case _, _ = <-r.rxShutdown:
 			return
-		case batch = <-completion:
+		case batch, ok := <-completion:
+			if !ok {
+				return
+			}
 			batch.packet = buffer
 		}
 	}

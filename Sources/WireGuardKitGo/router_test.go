@@ -595,3 +595,23 @@ func getFreeLocalUdpPort(t testing.TB) uint16 {
 
 	return port
 }
+
+// this is a poor test to see if there are deadlocks when shutting down the
+// tunnel. This test should finish in less than 10 seconds (reliably finishes
+// under 2 seconds on an M2 MacBook)
+func TestRapidShutdown(t *testing.T) {
+	configs, endpointConfigs := genConfigs(t)
+	aConfig := configs[0] + endpointConfigs[0]
+
+
+	remoteAddr := "1.2.3.5:9090"
+
+	// Opening connections that go nowhere must not block the shutdown of a tunnel
+	for i := 0; i < 3000; i += 1 {
+		aIp := netip.AddrFrom4([4]byte{1, 2, 3, 4})
+		a, _, _ := netstack.CreateNetTUN([]netip.Addr{aIp}, []netip.Addr{}, 1280)
+		tunnel := wgTurnOnIANFromExistingTunnel(a, aConfig, aIp, nil, 0, 0)
+		_ = wgOpenInTunnelTCP(tunnel, cstring(remoteAddr), 1)
+		wgTurnOff(tunnel)
+	}
+}
