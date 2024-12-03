@@ -117,8 +117,10 @@ func (tun *tunnelHandle) DisableSomeRoamingForBrokenMobileSemantics() {
 	}
 }
 
-// Creates a socket asynchronously and returns an index immediately. Calls to
-// get the socket will block until the passed in closure returns.
+// Creates a socket asynchronously and returns an handle to it immediately.
+// Calls to get the socket will block until the passed in closure returns. The
+// closure is takes a context and the virtual networking stack. Any connection
+// returned from the closure should be bound to virtual network.
 func (tun *tunnelHandle) AddSocket(ctx context.Context, createSocket func(ctx context.Context, virtualNet *netstack.Net) (net.Conn, error)) int32 {
 	tun.lock.Lock()
 	defer tun.lock.Unlock()
@@ -178,13 +180,26 @@ func (tun *tunnelHandle) Close() {
 }
 
 type socketHandle struct {
+	// Initializing lock is held whilst the connection is being _initialized_. It
+	// expected that the equivalent of `conn.Dial` will be called whilst this
+	// lock is held. This allows for creating a socket handle for a connection that is still initializing.
+	// The asynchronicity is needed to allow the iOS app to shut down a tunnel
+	// whilst it is trying to create a TCP connection to our relay.
 	initializingLock *sync.Mutex
+	// Underlying connection
 	conn             net.Conn
+	// Error returned when connection fails to initialize
 	connError        error
+	// Indicates if the socket has already been closed - used to change control
+	// flow when a socket handle is being closed before the connection was
+	// initialized.
 	shutdown         atomic.Bool
+	// Cancel function is returned by `context.WithCancel`. This should cancel
+	// any initialization of a socket.
 	cancelFunc       func()
 }
 
+// Creates a new socket handle for a connection and spawns off a goroutine initializing the connection.
 func newSocketHandle(vnet *netstack.Net, ctx context.Context, createSocket func(ctx context.Context, virtualNet *netstack.Net) (net.Conn, error)) *socketHandle {
 	ctx, cancelFunc := context.WithCancel(ctx)
 	handle := &socketHandle{
@@ -202,7 +217,7 @@ func newSocketHandle(vnet *netstack.Net, ctx context.Context, createSocket func(
 		cancelFunc()
 		// If handle is already shut down, no reason to store anything anywhere.
 		// If anything leaks, whenever the tunnel is shut down, all of it will be
-		// cleaned up anyway.
+		// cleaned up anyway when the underlying virtual networking stack is cleared.
 		if handle.shutdown.Load() {
 			return
 		}

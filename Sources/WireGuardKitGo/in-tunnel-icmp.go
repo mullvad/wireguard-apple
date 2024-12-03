@@ -18,6 +18,9 @@ func wgOpenInTunnelICMP(tunnelHandle int32, addressPtr *C.char) int32 {
 	if tun == nil {
 		return errNoSuchTunnel
 	}
+	// It is very important to clone this string, as this function will return
+	// before it is actually used in the closure that is passed to
+	// `tun.AddSocket`.
 	address := strings.Clone(C.GoString(addressPtr))
 
 	if tun.VirtualNet == nil {

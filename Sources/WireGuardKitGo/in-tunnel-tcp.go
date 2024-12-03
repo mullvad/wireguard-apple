@@ -12,6 +12,11 @@ import (
 	"golang.zx2c4.com/wireguard/tun/netstack"
 )
 
+// Opens a TCP connection to the specified address as though it was bound to the tunnel.
+// This function returns a socket handle immediately, and it can be used immediately after,
+// but the socket may not be connected immediately. When writing or reading from the socket,
+// the calls will wait until the socket connection is established or it times out.
+//
 //export wgOpenInTunnelTCP
 func wgOpenInTunnelTCP(tunnelHandle int32, address *C.char, timeout uint64) int32 {
 	tun := tunnels.Get(tunnelHandle)
