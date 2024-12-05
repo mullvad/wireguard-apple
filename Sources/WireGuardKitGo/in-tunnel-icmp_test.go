@@ -49,7 +49,9 @@ func TestIcmpSocketCloseFailsReadImmediately(t *testing.T) {
 	}
 }
 
-// For this test to work, valid wireguard keys must be supplied.
+// This test is disabled intentionally, since it relies on valid WireGuard keys
+// being set for both the client and the relay. It is left in the repo to allow
+// for easier manual testing.
 func testIcmpSocketParse(t *testing.T) {
 	privateKey, _ := base64.StdEncoding.DecodeString("mJiFq5mdExIZQVTt2QrL2o9sACkVAlUC7d/09+1wbkw=")
 	relayPubKey, _ := base64.StdEncoding.DecodeString("R5LUBgM/1UjeAR4lt+L/yA30Gee6/VqVZ9eAB3ZTajs=")
