@@ -119,7 +119,7 @@ func (tun *tunnelHandle) DisableSomeRoamingForBrokenMobileSemantics() {
 
 // Creates a socket asynchronously and returns an handle to it immediately.
 // Calls to get the socket will block until the passed in closure returns. The
-// closure is takes a context and the virtual networking stack. Any connection
+// closure takes a context and the virtual networking stack. Any connection
 // returned from the closure should be bound to virtual network.
 func (tun *tunnelHandle) AddSocket(ctx context.Context, createSocket func(ctx context.Context, virtualNet *netstack.Net) (net.Conn, error)) int32 {
 	tun.lock.Lock()
