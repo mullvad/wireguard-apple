@@ -705,11 +705,14 @@ extension WireGuardAdapter: ICMPPingProvider {
 
     /// Returns the handle associated with the tunnel. If the tunnel is not started, this will not return anything.
     public func tunnelHandle() throws  -> Int32 {
-        guard case .started(let tunnelHandle, _) = self.state else {
-            throw WireGuardAdapterError.invalidState
-        }
+        dispatchPrecondition(condition: .notOnQueue(workQueue))
+        return try workQueue.sync {
+            guard case .started(let tunnelHandle, _) = self.state else {
+                throw WireGuardAdapterError.invalidState
+            }
 
-        return tunnelHandle
+            return tunnelHandle
+        }
     }
 }
 
