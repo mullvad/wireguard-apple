@@ -235,6 +235,7 @@ func (handle *socketHandle) close() {
 	handle.shutdown.Store(true)
 	handle.cancelFunc()
 	handle.initializingLock.Lock() 
+	defer handle.initializingLock.Unlock() 
 	if handle.conn != nil {
 		handle.conn.Close()
 	}
