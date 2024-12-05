@@ -22,6 +22,8 @@ import (
 // Ultimately, this tests the same interface that will be used by the main app to
 // negotiate ephemeral peers with relays.
 func TestInTunnelTCP(t *testing.T) {
+	goroutineLeakCheck(t)
+
 	// 1. Setting up WireGuard devices
 	aIp := netip.AddrFrom4([4]byte{1, 2, 3, 4})
 	bIp := netip.AddrFrom4([4]byte{1, 2, 3, 5})
@@ -90,6 +92,7 @@ func TestInTunnelTCP(t *testing.T) {
 	assert.Equal(t, sendSlice, recvSlice)
 
 	wgCloseInTunnelTCP(tunnel, tcpClient)
+	bDev.Close()
 	wgTurnOff(tunnel)
 }
 
