@@ -32,7 +32,7 @@ func (h *tunnelHandles) Get(idx int32) *tunnelHandle {
 	return h.handles[idx]
 }
 
-// Inserts handle, returns a positive index if successful. Otherwise, returns a errDeviceLimitHit.
+// Inserts handle, returns a positive key if successful. Otherwise, returns a errDeviceLimitHit.
 func (h *tunnelHandles) Insert(handle *tunnelHandle) int32 {
 	h.lock.Lock()
 	defer h.lock.Unlock()
@@ -127,7 +127,7 @@ func (tun *tunnelHandle) AddSocket(ctx context.Context, createSocket func(ctx co
 
 	socketHandle := newSocketHandle(tun.VirtualNet, ctx, createSocket)
 	handle := insertHandle(tun.socketHandles, socketHandle)
-	// Whilst technically we could try getting an unused index into the map
+	// Whilst technically we could try getting an unused key into the map
 	// before creating a handle, it is far too unlikely that we will run out of
 	// int32 handles that the incurred mess of that is not worth it.
 	if handle < 0 {
