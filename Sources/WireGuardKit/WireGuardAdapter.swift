@@ -657,6 +657,7 @@ extension WireGuardAdapter: ICMPPingProvider {
     }
 
     public func closeICMP() {
+        dispatchPrecondition(condition: .onQueue(workQueue))
         if let icmpSocketHandle, case let .started(tunnelHandle, _) = state {
             wgCloseInTunnelICMP(tunnelHandle, icmpSocketHandle)
             self.icmpSocketHandle = nil
