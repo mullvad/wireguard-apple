@@ -76,6 +76,7 @@ func wgRecvInTunnelPing(tunnelHandel int32, socketHandle int32) int32 {
 		return errICMPOpenSocket
 	}
 	if err != nil {
+		tun.logger.Errorf("Failed to open ICMP socket: %s", err)
 		tun.RemoveAndCloseSocket(socketHandle)
 		return errICMPOpenSocket
 	}
