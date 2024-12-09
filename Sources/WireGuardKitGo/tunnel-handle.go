@@ -49,11 +49,17 @@ func (h *tunnelHandles) Remove(idx int32) *tunnelHandle {
 }
 
 type tunnelHandle struct {
+	// A WireGuard device for the exit relay.
 	exit          *device.Device
+	// A WireGuard device for the entry relay.
 	entry         *device.Device
+	// A logger.
 	logger        *device.Logger
+	// A virtual network used to send traffic to the exit relay.
 	VirtualNet    *netstack.Net
+	// Socket handles that are attached to the virtual network.
 	socketHandles map[int32]*socketHandle
+	// A lock to be held when mutating this struct.
 	lock          *sync.Mutex
 }
 
