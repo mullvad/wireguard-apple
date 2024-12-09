@@ -106,8 +106,8 @@ func (pi PacketHeaderData) asPacketIdentifier() PacketIdentifier {
 	destAddrBytes := pi.remoteAddr.As16()
 	result[0] = uint8(pi.protocol)
 	result[1] = 0
-	copy(result[4:], destAddrBytes[:])
 	binary.BigEndian.PutUint16(result[2:], pi.localPort)
+	copy(result[4:], destAddrBytes[:])
 	binary.BigEndian.PutUint16(result[20:], pi.remotePort)
 	return result
 }
