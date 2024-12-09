@@ -6,7 +6,6 @@ import (
 	"context"
 	"net"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"golang.zx2c4.com/wireguard/device"
@@ -190,10 +189,7 @@ type socketHandle struct {
 	conn             net.Conn
 	// Error returned when connection fails to initialize
 	connError        error
-	// Indicates if the socket has already been closed - used to change control
-	// flow when a socket handle is being closed before the connection was
-	// initialized.
-	shutdown         atomic.Bool
+
 	// Cancel function is returned by `context.WithCancel`. This should cancel
 	// any initialization of a socket.
 	cancelFunc       func()
@@ -206,7 +202,6 @@ func newSocketHandle(vnet *netstack.Net, ctx context.Context, createSocket func(
 		initializingLock: &sync.Mutex{},
 		conn:             nil,
 		connError:        nil,
-		shutdown:         atomic.Bool{},
 		cancelFunc:       cancelFunc,
 	}
 
@@ -218,9 +213,6 @@ func newSocketHandle(vnet *netstack.Net, ctx context.Context, createSocket func(
 		// If handle is already shut down, no reason to store anything anywhere.
 		// If anything leaks, whenever the tunnel is shut down, all of it will be
 		// cleaned up anyway when the underlying virtual networking stack is cleared.
-		if handle.shutdown.Load() {
-			return
-		}
 		if err != nil {
 			handle.connError = err
 		} else {
@@ -232,7 +224,6 @@ func newSocketHandle(vnet *netstack.Net, ctx context.Context, createSocket func(
 }
 
 func (handle *socketHandle) close() {
-	handle.shutdown.Store(true)
 	handle.cancelFunc()
 	handle.initializingLock.Lock() 
 	defer handle.initializingLock.Unlock() 
