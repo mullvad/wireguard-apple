@@ -75,9 +75,7 @@ func wgSendInTunnelTCP(tunnelHandle int32, socketHandle int32, data *byte, dataL
 		return errTCPNoSocket
 	}
 
-	byteBuffer := C.GoBytes(unsafe.Pointer(data), C.int(dataLen))
-
-	n, err := socket.Write(byteBuffer)
+	n, err := socket.Write(unsafe.Slice(data, dataLen))
 	if err != nil {
 		tun.logger.Errorf("Failed to write to TCP connection: %v", err)
 		return errTCPWrite
