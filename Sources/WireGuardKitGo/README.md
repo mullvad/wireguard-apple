@@ -19,10 +19,14 @@ so:
  GOEXPERIMENT=cgocheck2 CGO_ENABLE=1 go test -tags daita ./...
 ```
 
-To run with the race detector, append `-race` to list of arguments passed to
-the `go test` command. 
 
 When fighting deadlocks, it is also useful to add a timeout to the tests, via
 `-timeout=3s`. 
 
 Individual tests can be ran by using the `-run TestFunctionName` argument.
+
+To run with the race detector, append `-race` to list of arguments passed to
+the `go test` command. For running the whole suite, more than 10 minutes (the
+default timeout) will be required, so do set a longer one. Test runtime scales
+superlinearly with the amount of goroutines that are spawned, for instance `TestInTunnelTCP` normally runs for 0.251 seconds, barely any longer than it takes to run no tests at all (0.242), but with the race detector, it takes up to 5 seconds.
+
