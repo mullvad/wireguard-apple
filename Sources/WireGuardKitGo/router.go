@@ -204,15 +204,17 @@ func (r *Router) Read(bufs []byte, offset int) (n int, err error) {
 	packet := batch.packet
 
 	copy(bufs[offset:], packet)
+
+
+	if batch.isVirtual && fillPacketHeaderData(bufs[offset:], &headerData, false) {
+		r.read.setVirtualRoute(headerData)
+	}
+
 	// important to unblock the underlying reader.
 	select {
 	case _, _ = <-r.read.rxShutdown:
 		return 0, io.EOF
 	case batch.completion <- batch:
-	}
-
-	if batch.isVirtual && fillPacketHeaderData(bufs[offset:], &headerData, false) {
-		r.read.setVirtualRoute(headerData)
 	}
 
 	return len(packet), nil
