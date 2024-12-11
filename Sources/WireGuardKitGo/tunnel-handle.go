@@ -216,9 +216,6 @@ func newSocketHandle(vnet *netstack.Net, ctx context.Context, createSocket func(
 		defer handle.initializingLock.Unlock()
 		conn, err := createSocket(ctx, vnet)
 		cancelFunc()
-		// If handle is already shut down, no reason to store anything anywhere.
-		// If anything leaks, whenever the tunnel is shut down, all of it will be
-		// cleaned up anyway when the underlying virtual networking stack is cleared.
 		if err != nil {
 			handle.connError = err
 		} else {
