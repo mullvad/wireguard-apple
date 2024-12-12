@@ -1,14 +1,14 @@
 package main
 
 import (
-	"encoding/base64"
-	"encoding/hex"
 	"net/netip"
 	"time"
 	"unsafe"
 
 	"testing"
 
+	"golang.zx2c4.com/wireguard/conn"
+	"golang.zx2c4.com/wireguard/device"
 	"golang.zx2c4.com/wireguard/tun/netstack"
 )
 
@@ -49,32 +49,28 @@ func TestIcmpSocketCloseFailsReadImmediately(t *testing.T) {
 	}
 }
 
-// This test is disabled intentionally, since it relies on valid WireGuard keys
-// being set for both the client and the relay. It is left in the repo to allow
-// for easier manual testing.
-func testIcmpSocketParse(t *testing.T) {
-	privateKey, _ := base64.StdEncoding.DecodeString("mJiFq5mdExIZQVTt2QrL2o9sACkVAlUC7d/09+1wbkw=")
-	relayPubKey, _ := base64.StdEncoding.DecodeString("R5LUBgM/1UjeAR4lt+L/yA30Gee6/VqVZ9eAB3ZTajs=")
-	clientConfig := uapiCfg(
-		"private_key", hex.EncodeToString(privateKey[:]),
-		"listen_port", "0",
-		"replace_peers", "true",
-		"public_key", hex.EncodeToString(relayPubKey),
-		"endpoint", "45.129.56.68:51820",
-		"protocol_version", "1",
-		"replace_allowed_ips", "true",
-		"allowed_ip", "0.0.0.0/0",
-	)
+func TestIcmpSocketParse(t *testing.T) {
+	aIp := netip.AddrFrom4([4]byte{1, 2, 3, 4})
+	bIp := netip.AddrFrom4([4]byte{1, 2, 3, 5})
 
-	clientIp := netip.MustParseAddr("10.70.128.243")
-	clientTun, _, _ := netstack.CreateNetTUN([]netip.Addr{clientIp}, []netip.Addr{}, 1280)
+	a, _, _ := netstack.CreateNetTUN([]netip.Addr{aIp}, []netip.Addr{}, 1280)
+	b, _, _ := netstack.CreateNetTUN([]netip.Addr{bIp}, []netip.Addr{}, 1280)
 
-	tunnel := wgTurnOnIANFromExistingTunnel(clientTun, clientConfig, clientIp, nil, 0, 0)
+	configs, endpointConfigs := genConfigs(t)
+	aConfig := configs[0] + endpointConfigs[0]
+	bConfig := configs[1] + endpointConfigs[1]
 
+	tunnel := wgTurnOnIANFromExistingTunnel(a, aConfig, aIp, nil, 0, 0)
 
-	pingableHost := []byte("10.64.0.1")
+	bDev := device.NewDevice(b, conn.NewStdNetBind(), device.NewLogger(device.LogLevelSilent, ""))
+
+	bDev.IpcSet(bConfig)
+	bDev.Up()
+
+	pingableHost := []byte(bIp.String())
 	pingableHost = append(pingableHost, 0)
 	icmpSocket := wgOpenInTunnelICMP(tunnel, (*_Ctype_char)(unsafe.Pointer(unsafe.SliceData(pingableHost))))
+
 	go func() {
 		id := int32(133)
 		seq := uint16(1)
