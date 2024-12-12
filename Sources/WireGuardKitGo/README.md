@@ -12,8 +12,9 @@ go build -tags daita
 # To test with DAITA
 One can no longer just run `go test` and see all the tests pass. To be able to
 test this module with DAITA and run all the niceties of native Go testing
-toolkit (e.g. the race detector) one must reign over some ancient runes like
-so:
+toolkit (e.g. the race detector), we must build `maybenot` for wireguard-go, so
+do please run the above build commands first. One must also reign over some
+ancient runes like so:
 
 ```bash
  GOEXPERIMENT=cgocheck2 CGO_ENABLE=1 go test -tags daita ./...
