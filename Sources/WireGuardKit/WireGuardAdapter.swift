@@ -283,7 +283,6 @@ public class WireGuardAdapter {
             self.removeDefaultPathObserver()
 
             self.state = .stopped
-            self.closeICMP()
 
             completionHandler(nil)
         }
@@ -371,7 +370,6 @@ public class WireGuardAdapter {
                 }
 
                 self.state = .temporaryShutdown(settingsGenerator)
-                self.closeICMP()
 
             case .stopped:
                 fatalError()
@@ -581,7 +579,6 @@ public class WireGuardAdapter {
                 self.logHandler(.verbose, "Connectivity offline, pausing backend.")
 
                 self.state = .temporaryShutdown(settingsGenerator)
-                self.closeICMP()
                 wgTurnOff(handle)
             }
 
