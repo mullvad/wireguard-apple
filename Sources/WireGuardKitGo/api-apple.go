@@ -5,6 +5,7 @@
 
 package main
 
+// #include <stdint.h>
 // #include <stdlib.h>
 // #include <sys/types.h>
 // static void callLogger(void *func, void *ctx, int level, const char *msg)
@@ -99,6 +100,14 @@ func (l CLogger) Printf(format string, args ...interface{}) {
 
 var tunnels = NewTunnelHandles()
 
+type daitaParameters struct {
+	MaybeNotMachines    string
+	MaybeNotMaxEvents   uint32
+	MaybeNotMaxActions  uint32
+	MaybeNotMaxPadding  float64
+	MaybeNotMaxBlocking float64
+}
+
 func daitaParametersFromRaw(maybeNotMachines *C.char, p *C.DaitaGoParameters) daitaParameters {
 	return daitaParameters{
 		MaybeNotMachines:    C.GoString(maybeNotMachines),
@@ -107,14 +116,6 @@ func daitaParametersFromRaw(maybeNotMachines *C.char, p *C.DaitaGoParameters) da
 		MaybeNotMaxPadding:  float64(p.maybeNotMaxPadding),
 		MaybeNotMaxBlocking: float64(p.maybeNotMaxBlocking),
 	}
-}
-
-type daitaParameters struct {
-	MaybeNotMachines    string
-	MaybeNotMaxEvents   uint32
-	MaybeNotMaxActions  uint32
-	MaybeNotMaxPadding  float64
-	MaybeNotMaxBlocking float64
 }
 
 var rng = rand.New(rand.NewSource(time.Now().UnixNano()))
@@ -282,7 +283,7 @@ func wgTurnOnIANFromExistingTunnel(tun tun.Device, settings string, privateAddr 
 	logger.Verbosef("Attaching to interface")
 	dev := device.NewDevice(&wrapper, conn.NewStdNetBind(), logger)
 
-	return addTunnelFromDevice(dev, nil, settings, "", virtualNet, logger, daitaParameters) // FIXME
+	return addTunnelFromDevice(dev, nil, settings, "", virtualNet, logger, daitaParameters)
 }
 
 //export wgTurnOnIAN
