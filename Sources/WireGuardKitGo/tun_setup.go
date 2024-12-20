@@ -64,6 +64,7 @@ func addTunnelFromDevice(exitDev *device.Device, entryDev *device.Device, settin
 			return errBadWgConfig
 		}
 		if len(daitaParameters.MaybeNotMachines) > 0 {
+			logger.Errorf("machines: %s", daitaParameters.MaybeNotMachines)
 			returnValue := configureDaita(entryDev, entrySettings, daitaParameters)
 			if returnValue != 0 {
 				return returnValue
@@ -72,6 +73,7 @@ func addTunnelFromDevice(exitDev *device.Device, entryDev *device.Device, settin
 	} else {
 		// Enable DAITA if DAITA parameters are passed through
 		if len(daitaParameters.MaybeNotMachines) > 0 {
+			logger.Errorf("machines: %s", daitaParameters.MaybeNotMachines)
 			returnValue := configureDaita(exitDev, settings, daitaParameters)
 			if returnValue != 0 {
 				return returnValue
