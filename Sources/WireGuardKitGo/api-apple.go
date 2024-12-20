@@ -108,8 +108,11 @@ type daitaParameters struct {
 	MaybeNotMaxBlocking float64
 }
 
-func daitaParametersFromRaw(maybeNotMachines *C.char, p *C.DaitaGoParameters) daitaParameters {
-	return daitaParameters{
+func daitaParametersFromRaw(maybeNotMachines *C.char, p *C.DaitaGoParameters) *daitaParameters {
+	if maybeNotMachines == nil || p == nil {
+		return nil
+	}
+	return &daitaParameters{
 		MaybeNotMachines:    C.GoString(maybeNotMachines),
 		MaybeNotMaxEvents:   uint32(p.maybeNotMaxEvents),
 		MaybeNotMaxActions:  uint32(p.maybeNotMaxActions),
@@ -259,7 +262,7 @@ func wgTurnOn(settings *C.char, tunFd int32, maybeNotMachines *C.char, daitaPara
 	return addTunnelFromDevice(dev, nil, C.GoString(settings), "", nil, logger, daitaParams)
 }
 
-func wgTurnOnIANFromExistingTunnel(tun tun.Device, settings string, privateAddr netip.Addr, daitaParameters daitaParameters) int32 {
+func wgTurnOnIANFromExistingTunnel(tun tun.Device, settings string, privateAddr netip.Addr, daitaParameters *daitaParameters) int32 {
 	logger := &device.Logger{
 		Verbosef: CLogger(0).Printf,
 		Errorf:   CLogger(1).Printf,
