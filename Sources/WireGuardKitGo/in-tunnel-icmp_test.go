@@ -111,20 +111,19 @@ func TestIcmpThrash(t *testing.T) {
 	pingableHost = append(pingableHost, 0)
 	icmpSocket := wgOpenInTunnelICMP(tunnel, (*_Ctype_char)(unsafe.Pointer(unsafe.SliceData(pingableHost))))
 
+	// continuously send ICMP traffic
 	go func() {
 		id := int32(133)
 		seq := uint16(1)
 		for {
-			result := wgSendInTunnelPing(tunnel, icmpSocket, uint16(id), id, seq)
+			_ = wgSendInTunnelPing(tunnel, icmpSocket, uint16(id), id, seq)
 			seq += 1
-			if result < 0 {
-				return
-			}
 		}
 	}()
 
 	recvChan := make(chan int32)
 
+	// Try and receive ICMP responses for a good while
 	go func() {
 		for i := 0; i < 1024*128; i += 1 {
 			result := wgRecvInTunnelPing(tunnel, icmpSocket)
@@ -136,6 +135,7 @@ func TestIcmpThrash(t *testing.T) {
 		recvChan <- 0
 	}()
 
+	// Continuously bring the tunnel up and down.
 	go func() {
 		for {
 			a, _, _ := netstack.CreateNetTUN([]netip.Addr{aIp}, []netip.Addr{}, 1280)
