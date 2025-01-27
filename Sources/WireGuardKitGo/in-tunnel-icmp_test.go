@@ -88,3 +88,65 @@ func TestIcmpSocketParse(t *testing.T) {
 		t.Fatalf("Expected non zero result - %v", result)
 	}
 }
+
+func TestIcmpThrash(t *testing.T) {
+	aIp := netip.AddrFrom4([4]byte{1, 2, 3, 4})
+	bIp := netip.AddrFrom4([4]byte{1, 2, 3, 5})
+
+	a, _, _ := netstack.CreateNetTUN([]netip.Addr{aIp}, []netip.Addr{}, 1280)
+	b, _, _ := netstack.CreateNetTUN([]netip.Addr{bIp}, []netip.Addr{}, 1280)
+
+	configs, endpointConfigs := genConfigs(t)
+	aConfig := configs[0] + endpointConfigs[0]
+	bConfig := configs[1] + endpointConfigs[1]
+
+	tunnel := wgTurnOnIANFromExistingTunnel(a, aConfig, aIp, nil)
+
+	bDev := device.NewDevice(b, conn.NewStdNetBind(), device.NewLogger(device.LogLevelSilent, ""))
+
+	bDev.IpcSet(bConfig)
+	bDev.Up()
+
+	pingableHost := []byte(bIp.String())
+	pingableHost = append(pingableHost, 0)
+	icmpSocket := wgOpenInTunnelICMP(tunnel, (*_Ctype_char)(unsafe.Pointer(unsafe.SliceData(pingableHost))))
+
+	go func() {
+		id := int32(133)
+		seq := uint16(1)
+		for {
+			result := wgSendInTunnelPing(tunnel, icmpSocket, uint16(id), id, seq)
+			seq += 1
+			if result < 0 {
+				return
+			}
+		}
+	}()
+
+	recvChan := make(chan int32)
+
+	go func() {
+		for i := 0; i < 1024*128; i += 1 {
+			result := wgRecvInTunnelPing(tunnel, icmpSocket)
+			if result != errNoSuchTunnel && result != errICMPReadSocket && result != errICMPOpenSocket && result < 0 {
+				recvChan <- result
+			}
+		}
+
+		recvChan <- 0
+	}()
+
+	go func() {
+		for {
+			a, _, _ := netstack.CreateNetTUN([]netip.Addr{aIp}, []netip.Addr{}, 1280)
+			wgTurnOff(tunnel)
+			_ = wgTurnOnIANFromExistingTunnel(a, aConfig, aIp, nil)
+			_ = wgOpenInTunnelICMP(tunnel, (*_Ctype_char)(unsafe.Pointer(unsafe.SliceData(pingableHost))))
+		}
+	}()
+
+	result := <-recvChan
+	if result != 0 {
+		t.Fatalf("Received non-zero result from receiver goroutine: - %d", result)
+	}
+}
