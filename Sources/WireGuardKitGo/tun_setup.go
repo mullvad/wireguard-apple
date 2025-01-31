@@ -51,7 +51,7 @@ func bringUpDevice(dev *device.Device, settings string, logger *device.Logger) e
 	return nil
 }
 
-func addTunnelFromDevice(exitDev *device.Device, entryDev *device.Device, settings string, entrySettings string, virtualNet *netstack.Net, logger *device.Logger, daitaParameters *daitaParameters) int32 {
+func addTunnelFromDevice(exitDev *device.Device, entryDev *device.Device, settings string, entrySettings string, virtualNet *netstack.Net, logger *device.Logger, daitaParameters *daitaParameters, user *device.Device) int32 {
 	err := bringUpDevice(exitDev, settings, logger)
 	if err != nil {
 		return errBadWgConfig
@@ -79,6 +79,6 @@ func addTunnelFromDevice(exitDev *device.Device, entryDev *device.Device, settin
 		}
 	}
 
-	handle := NewTunnelHandle(exitDev, entryDev, logger, virtualNet)
+	handle := NewTunnelHandle(exitDev, entryDev, logger, virtualNet, user)
 	return tunnels.Insert(&handle)
 }

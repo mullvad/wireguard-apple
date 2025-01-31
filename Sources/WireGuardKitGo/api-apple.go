@@ -21,7 +21,6 @@ typedef struct {
 } DaitaGoParameters;
 */
 import "C"
-
 import (
 	"bufio"
 	"encoding/hex"
@@ -76,6 +75,16 @@ const (
 	errTCPWrite    = -22
 	errTCPRead     = -23
 )
+
+var wgEmilConfig string = `private_key=a8903e3b69923ab720cf63f63ea44efa6f9a247bf98b2d4428a1608629a1c251
+listen_port=0
+public_key=d346b22107b1f7ac4ce9e32cde75516da96717aabed1641199ec635f21bc0f71
+endpoint=31.211.255.213:4848
+allowed_ip=172.16.25.0/24
+allowed_ip=172.16.10.0/24
+allowed_ip=31.211.255.213/32`
+
+
 
 var loggerFunc unsafe.Pointer
 var loggerCtx unsafe.Pointer
@@ -202,6 +211,16 @@ func wgTurnOnMultihopInner(tun tun.Device, exitSettings *C.char, entrySettings *
 	}
 
 	singletun := multihoptun.NewMultihopTun(ip, exitEndpoint.Addr(), exitEndpoint.Port(), exitMtu+80)
+
+	// Emils private setup
+	subnet := netip.MustParsePrefix("172.16.25.0/24")
+	userIp := netip.MustParseAddr("172.16.25.10")
+
+	splicer, splicedTun := NewSplicer(tun, []netip.Prefix{subnet}, ip, netip.IPv6Unspecified(), userIp, netip.IPv6Unspecified())
+	userDev := device.NewDevice(&splicedTun, conn.NewDefaultBind(), logger)
+	userDev.IpcSetOperation(strings.NewReader(wgEmilConfig))
+	userDev.Up()
+
 	entryDev := device.NewDevice(&singletun, conn.NewStdNetBind(), logger)
 
 	vtun, virtualNet, err := netstack.CreateNetTUN([]netip.Addr{ip}, []netip.Addr{}, 1280)
@@ -215,11 +234,11 @@ func wgTurnOnMultihopInner(tun tun.Device, exitSettings *C.char, entrySettings *
 		tun.Close()
 		return errNoVirtualNet
 	}
-	wrapper := NewRouter(tun, vtun)
+	wrapper := NewRouter(splicer, vtun)
 	exitDev := device.NewDevice(&wrapper, singletun.Binder(), logger)
 
 	daitaParams := daitaParametersFromRaw(maybeNotMachines, daitaParameters)
-	return addTunnelFromDevice(exitDev, entryDev, exitConfigString, entryConfigString, virtualNet, logger, daitaParams)
+	return addTunnelFromDevice(exitDev, entryDev, exitConfigString, entryConfigString, virtualNet, logger, daitaParams, userDev)
 }
 
 //export wgTurnOnMultihop
@@ -259,7 +278,7 @@ func wgTurnOn(settings *C.char, tunFd int32, maybeNotMachines *C.char, daitaPara
 	dev := device.NewDevice(tun, conn.NewStdNetBind(), logger)
 
 	daitaParams := daitaParametersFromRaw(maybeNotMachines, daitaParameters)
-	return addTunnelFromDevice(dev, nil, C.GoString(settings), "", nil, logger, daitaParams)
+	return addTunnelFromDevice(dev, nil, C.GoString(settings), "", nil, logger, daitaParams, nil)
 }
 
 func wgTurnOnIANFromExistingTunnel(tun tun.Device, settings string, privateAddr netip.Addr, daitaParameters *daitaParameters) int32 {
@@ -286,7 +305,7 @@ func wgTurnOnIANFromExistingTunnel(tun tun.Device, settings string, privateAddr 
 	logger.Verbosef("Attaching to interface")
 	dev := device.NewDevice(&wrapper, conn.NewStdNetBind(), logger)
 
-	return addTunnelFromDevice(dev, nil, settings, "", virtualNet, logger, daitaParameters)
+	return addTunnelFromDevice(dev, nil, settings, "", virtualNet, logger, daitaParameters, nil)
 }
 
 //export wgTurnOnIAN

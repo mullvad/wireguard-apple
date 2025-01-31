@@ -53,6 +53,7 @@ type tunnelHandle struct {
 	exit          *device.Device
 	// A WireGuard device for the entry relay.
 	entry         *device.Device
+	userDevice		*device.Device
 	// A logger.
 	logger        *device.Logger
 	// A virtual network used to send traffic to the exit relay.
@@ -63,10 +64,11 @@ type tunnelHandle struct {
 	lock          *sync.Mutex
 }
 
-func NewTunnelHandle(exit *device.Device, entry *device.Device, logger *device.Logger, virtualNet *netstack.Net) tunnelHandle {
+func NewTunnelHandle(exit *device.Device, entry *device.Device, logger *device.Logger, virtualNet *netstack.Net, userDevice *device.Device) tunnelHandle {
 	return tunnelHandle{
 		exit:          exit,
 		entry:         entry,
+		userDevice: userDevice,
 		logger:        logger,
 		VirtualNet:    virtualNet,
 		socketHandles: make(map[int32]*socketHandle),
