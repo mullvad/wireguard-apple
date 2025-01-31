@@ -218,8 +218,6 @@ func wgTurnOnMultihopInner(tun tun.Device, exitSettings *C.char, entrySettings *
 
 	splicer, splicedTun := NewSplicer(tun, []netip.Prefix{subnet1, subnet2, subnet3}, ip, netip.IPv6Unspecified(), userIp, netip.IPv6Unspecified())
 	userDev := device.NewDevice(&splicedTun, conn.NewDefaultBind(), logger)
-	userDev.IpcSetOperation(strings.NewReader(wgEmilConfig))
-	userDev.Up()
 
 	entryDev := device.NewDevice(&singletun, conn.NewStdNetBind(), logger)
 
