@@ -84,8 +84,6 @@ allowed_ip=172.16.25.0/24
 allowed_ip=172.16.10.0/24
 allowed_ip=31.211.255.213/32`
 
-
-
 var loggerFunc unsafe.Pointer
 var loggerCtx unsafe.Pointer
 
@@ -213,10 +211,12 @@ func wgTurnOnMultihopInner(tun tun.Device, exitSettings *C.char, entrySettings *
 	singletun := multihoptun.NewMultihopTun(ip, exitEndpoint.Addr(), exitEndpoint.Port(), exitMtu+80)
 
 	// Emils private setup
-	subnet := netip.MustParsePrefix("172.16.25.0/24")
+	subnet1 := netip.MustParsePrefix("172.16.25.0/24")
+	subnet2 := netip.MustParsePrefix("172.16.10.0/24")
+	subnet3 := netip.MustParsePrefix("31.211.255.213/32")
 	userIp := netip.MustParseAddr("172.16.25.10")
 
-	splicer, splicedTun := NewSplicer(tun, []netip.Prefix{subnet}, ip, netip.IPv6Unspecified(), userIp, netip.IPv6Unspecified())
+	splicer, splicedTun := NewSplicer(tun, []netip.Prefix{subnet1, subnet2, subnet3}, ip, netip.IPv6Unspecified(), userIp, netip.IPv6Unspecified())
 	userDev := device.NewDevice(&splicedTun, conn.NewDefaultBind(), logger)
 	userDev.IpcSetOperation(strings.NewReader(wgEmilConfig))
 	userDev.Up()
