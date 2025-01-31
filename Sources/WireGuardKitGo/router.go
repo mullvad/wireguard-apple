@@ -39,10 +39,9 @@ func (batch PacketBatch) isVirtual() bool {
 // to multiplex between real, user traffic and our own virtual networking stack
 // to work around iOS limitations.
 type Router struct {
-	real     tun.Device
-	virtuals []tun.Device
-	read     routerRead
-	write    routerWrite
+	devices []tun.Device
+	read    routerRead
+	write   routerWrite
 }
 
 type routerRead struct {
@@ -68,10 +67,10 @@ type routerWrite struct {
 // Close implements tun.Device.
 func (r *Router) Close() error {
 	close(r.read.rxShutdown)
-	err1 := r.real.Close()
+	err1 := r.real().Close()
 	virtualErrs := []error{}
-	for idx := range r.virtuals {
-		virtualErrs = append(virtualErrs, r.virtuals[idx].Close())
+	for _, device := range r.devices[1:] {
+		virtualErrs = append(virtualErrs, device.Close())
 	}
 	if err1 != nil {
 		return err1
@@ -87,30 +86,34 @@ func (r *Router) Close() error {
 
 // Events implements tun.Device.
 func (r *Router) Events() <-chan tun.Event {
-	return r.real.Events()
+	return r.real().Events()
 }
 
 // File implements tun.Device.
 func (r *Router) File() *os.File {
-	return r.real.File()
+	return r.real().File()
 }
 
 // MTU implements tun.Device.
 func (r *Router) MTU() (int, error) {
-	return r.real.MTU()
+	return r.real().MTU()
 }
 
 // Name implements tun.Device.
 func (r *Router) Name() (string, error) {
-	return r.real.Name()
+	return r.real().Name()
 }
 
 // Name implements tun.Device.
 func (r *Router) Flush() error {
-	for _, dev := range r.virtuals {
+	for _, dev := range r.devices[1:] {
 		dev.Flush()
 	}
-	return r.real.Flush()
+	return r.real().Flush()
+}
+
+func (r *Router) real() tun.Device {
+	return r.devices[0]
 }
 
 type PacketHeaderData struct {
@@ -265,18 +268,13 @@ func (r *Router) Write(packet []byte, offset int) (int, error) {
 
 	headerData := PacketHeaderData{}
 
-	isVirtual := false
 	index := 0
 	if fillPacketHeaderData(packet[offset:], &headerData, true) {
 		identifier := headerData.asPacketIdentifier()
-		index, isVirtual = r.write.virtualRoutes[identifier]
+		index = r.write.virtualRoutes[identifier]
 	}
 
-	if !isVirtual {
-		return r.real.Write(packet, offset)
-	} else {
-		return r.virtuals[index-1].Write(packet, offset)
-	}
+	return r.devices[index].Write(packet, offset)
 }
 
 func initializeReadPacketBuffer(size int) [][]byte {
@@ -334,10 +332,11 @@ func (r *routerRead) readWorker(device tun.Device, index int) {
 	}
 }
 
-func newRouterRead(real tun.Device, virtuals []tun.Device, virtualRouteChan chan virtualRoute) routerRead {
+func newRouterRead(devices []tun.Device, virtualRouteChan chan virtualRoute) routerRead {
 	rxChannel := make(chan *PacketBatch)
-	rxShutdown := make(chan struct{}, len(virtuals))
+	rxShutdown := make(chan struct{}, len(devices))
 	errorChannel := make(chan error, 1)
+
 	result := routerRead{
 		map[PacketIdentifier]int{},
 		virtualRouteChan,
@@ -348,11 +347,11 @@ func newRouterRead(real tun.Device, virtuals []tun.Device, virtualRouteChan chan
 		nil,
 	}
 
-	result.waitGroup.Add(2)
-	go result.readWorker(real, 0)
-	for index, virtual := range virtuals {
-		go result.readWorker(virtual, index)
+	result.waitGroup.Add(len(devices))
+	for index, dev := range devices {
+		go result.readWorker(dev, index)
 	}
+
 	return result
 }
 
@@ -366,11 +365,10 @@ func newRouterWrite(virtualRouteChan chan virtualRoute) routerWrite {
 func NewRouter(real, virtual tun.Device) Router {
 	virtualRouteChan := make(chan virtualRoute, 128)
 
-	virtuals := []tun.Device{virtual}
+	devices := []tun.Device{real, virtual}
 	result := Router{
-		real,
-		virtuals,
-		newRouterRead(real, virtuals, virtualRouteChan),
+		devices,
+		newRouterRead(devices, virtualRouteChan),
 		newRouterWrite(virtualRouteChan),
 	}
 	return result
