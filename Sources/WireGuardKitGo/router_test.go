@@ -246,7 +246,8 @@ func setUpRouterDevices(t testing.TB) (*netstack.Net, *netstack.Net, *device.Dev
 	a, aNet, _ := netstack.CreateNetTUN([]netip.Addr{aIp}, []netip.Addr{}, 1420)
 	aVirtual, aNetV, _ := netstack.CreateNetTUN([]netip.Addr{aIp}, []netip.Addr{}, 1420)
 
-	router := NewRouter(a, aVirtual)
+	splicer, _ := NewSplicer(a, []netip.Prefix{}, aIp, netip.IPv6Unspecified(), netip.IPv4Unspecified(), netip.IPv6Unspecified())
+	router := NewRouter(splicer, aVirtual)
 
 	b, bNet, _ := netstack.CreateNetTUN([]netip.Addr{bIp}, []netip.Addr{}, 1420)
 

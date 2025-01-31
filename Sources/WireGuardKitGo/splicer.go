@@ -39,8 +39,7 @@ func NewSplicer(tun tun.Device, subnets []netip.Prefix, source4Address, source6A
 // Close implements tun.Device.
 func (s Splicer) Close() error {
 	s.sb.Close()
-	s.tun.Close()
-	return nil
+	return s.tun.Close()
 }
 
 // Events implements tun.Device.
@@ -128,8 +127,8 @@ func (s Splicer) Write(packet []byte, offset int) (int, error) {
 
 // Used to send writes to splicerTun from Splicer
 type sharedBuf struct {
-	buffer  [2048][1700]byte
-	lens    [2048]int
+	buffer  [128][1700]byte
+	lens    [128]int
 	lastIdx int
 	lock    *sync.Mutex
 	cond    *sync.Cond
@@ -140,8 +139,8 @@ func newSharedBuf() sharedBuf {
 	lock := &sync.Mutex{}
 	cond := sync.NewCond(lock)
 
-	var buffer [2048][1700]byte
-	var lens [2048]int
+	var buffer [128][1700]byte
+	var lens [128]int
 	lastIdx := -1
 	closed := false
 
@@ -210,7 +209,6 @@ type SplicedTun struct {
 
 // Close implements tun.Device.
 func (s SplicedTun) Close() error {
-	s.parentTun.Close()
 	s.sb.Close()
 	return nil
 }
