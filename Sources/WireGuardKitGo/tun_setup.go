@@ -80,7 +80,7 @@ func addTunnelFromDevice(exitDev *device.Device, entryDev *device.Device, settin
 	}
 
 	if user != nil {
-		bringUpDevice(user, wgEmilConfig, nil)
+		bringUpDevice(user, wgEmilConfig, logger)
 	}
 
 	handle := NewTunnelHandle(exitDev, entryDev, logger, virtualNet, user)
