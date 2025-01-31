@@ -2,6 +2,7 @@ package main
 
 import (
 	"io"
+	"net/netip"
 	"os"
 	"sync"
 
@@ -12,8 +13,27 @@ import (
 
 type Splicer struct {
 	tun            tun.Device
-	sb             sharedBuf
-	targetNetworks []byte
+	sb             *sharedBuf
+	targetNetworks []netip.Prefix
+}
+
+func NewSplicer(tun tun.Device, subnets []netip.Prefix, source4Address, source6Address, user4Address, user6Address netip.Addr) (Splicer, SplicedTun) {
+	sharedBuf := newSharedBuf()
+
+	splicer := Splicer{
+		tun, &sharedBuf, subnets,
+	}
+
+	splicedTun := SplicedTun{
+		tun,
+		&sharedBuf,
+		tcpip.AddrFromSlice(source4Address.AsSlice()),
+		tcpip.AddrFromSlice(source6Address.AsSlice()),
+		tcpip.AddrFromSlice(user4Address.AsSlice()),
+		tcpip.AddrFromSlice(user6Address.AsSlice()),
+	}
+
+	return splicer, splicedTun
 }
 
 // Close implements tun.Device.
@@ -49,13 +69,61 @@ func (s Splicer) Name() (string, error) {
 }
 
 // Read implements tun.Device.
-func (s Splicer) Read([]byte, int) (int, error) {
-	panic("unimplemented")
+func (s Splicer) Read(packet []byte, prefix int) (int, error) {
+	var n int
+	var err error
+	for {
+		n, err = s.tun.Read(packet, prefix)
+		if err != nil {
+			return 0, err
+		}
+
+		if s.packetMatchesUserNet(packet[prefix:n]) {
+			s.sb.Write(packet[prefix:n])
+			continue
+		}
+
+		break
+	}
+
+	return n, nil
+
+}
+
+func (s Splicer) packetMatchesUserNet(packet []byte) bool {
+	var destinationAddress tcpip.Address
+
+	if len(packet) < header.IPv4MinimumSize {
+		return false
+	}
+
+	ipVersion := (packet[0] >> 4) & 0x0f
+	switch ipVersion {
+	case 4:
+		destinationAddress = header.IPv4(packet).DestinationAddress()
+	case 6:
+		if len(packet) < header.IPv6MinimumSize {
+			return false
+		}
+		destinationAddress = header.IPv6(packet).DestinationAddress()
+	default:
+		return false
+	}
+
+	// ignoring the OK value since a slice of tcpip.Address will always convert to a netip.Addr
+	addr, _ := netip.AddrFromSlice(destinationAddress.AsSlice())
+	for _, subnet := range s.targetNetworks {
+		if subnet.Contains(addr) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // Write implements tun.Device.
-func (s Splicer) Write([]byte, int) (int, error) {
-	panic("unimplemented")
+func (s Splicer) Write(packet []byte, offset int) (int, error) {
+	return s.tun.Write(packet, offset)
 }
 
 // Used to send writes to splicerTun from Splicer
@@ -97,6 +165,7 @@ func (sb *sharedBuf) Close() {
 
 func (sb *sharedBuf) Write(packet []byte) {
 	sb.lock.Lock()
+	defer sb.lock.Unlock()
 	for len(sb.buffer) <= sb.lastIdx {
 		sb.cond.Wait()
 	}
@@ -129,14 +198,9 @@ func (sb *sharedBuf) Read(packet []byte) (int, bool) {
 	return packetLen, false
 }
 
-type packet struct {
-	buffer [1700]byte
-	offset int
-}
-
-type SplicerTun struct {
+type SplicedTun struct {
 	parentTun   tun.Device
-	sb          sharedBuf
+	sb          *sharedBuf
 	realSource4 tcpip.Address
 	realSource6 tcpip.Address
 
@@ -145,39 +209,39 @@ type SplicerTun struct {
 }
 
 // Close implements tun.Device.
-func (s SplicerTun) Close() error {
+func (s SplicedTun) Close() error {
 	s.parentTun.Close()
 	s.sb.Close()
 	return nil
 }
 
 // Events implements tun.Device.
-func (s SplicerTun) Events() <-chan tun.Event {
+func (s SplicedTun) Events() <-chan tun.Event {
 	return make(chan tun.Event)
 }
 
 // File implements tun.Device.
-func (s SplicerTun) File() *os.File {
+func (s SplicedTun) File() *os.File {
 	return nil
 }
 
 // Flush implements tun.Device.
-func (s SplicerTun) Flush() error {
+func (s SplicedTun) Flush() error {
 	return nil
 }
 
 // MTU implements tun.Device.
-func (s SplicerTun) MTU() (int, error) {
+func (s SplicedTun) MTU() (int, error) {
 	return s.parentTun.MTU()
 }
 
 // Name implements tun.Device.
-func (s SplicerTun) Name() (string, error) {
+func (s SplicedTun) Name() (string, error) {
 	return s.parentTun.Name()
 }
 
 // Read implements tun.Device.
-func (s SplicerTun) Read(packet []byte, offset int) (int, error) {
+func (s SplicedTun) Read(packet []byte, offset int) (int, error) {
 	n, isClosed := s.sb.Read(packet[offset:])
 	if isClosed {
 		return 0, io.EOF
@@ -322,7 +386,7 @@ func rewriteTcpHeader(source, destination tcpip.Address, packet []byte) {
 	)))
 }
 func rewriteIcmp4Header(source, destination tcpip.Address, packet []byte) {
-	if len(packet) < header.ICMPv4MinimumSize  {
+	if len(packet) < header.ICMPv4MinimumSize {
 		return
 	}
 
@@ -349,7 +413,7 @@ func rewriteIcmp6Header(source, destination tcpip.Address, packet []byte) {
 }
 
 // Write implements tun.Device.
-func (s SplicerTun) Write(packet []byte, offset int) (int, error) {
+func (s SplicedTun) Write(packet []byte, offset int) (int, error) {
 	rewriteIncomingHeader(packet[offset:], s.realSource4, s.realSource6)
 	return s.parentTun.Write(packet, offset)
 }
