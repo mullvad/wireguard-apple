@@ -185,7 +185,9 @@ func (tun *tunnelHandle) Close() {
 		tun.entry.Close()
 	}
 
-	tun.userDevice.Close()
+	if tun.userDevice != nil {
+		tun.userDevice.Close()
+	}
 }
 
 type socketHandle struct {
