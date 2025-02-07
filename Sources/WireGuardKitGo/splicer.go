@@ -2,12 +2,14 @@ package main
 
 import (
 	"io"
+	"math"
 	"net/netip"
 	"os"
 	"sync"
 
 	"golang.zx2c4.com/wireguard/tun"
 	"gvisor.dev/gvisor/pkg/tcpip"
+	"gvisor.dev/gvisor/pkg/tcpip/checksum"
 	"gvisor.dev/gvisor/pkg/tcpip/header"
 )
 
@@ -86,7 +88,6 @@ func (s Splicer) Read(packet []byte, prefix int) (int, error) {
 	}
 
 	return n, nil
-
 }
 
 func (s Splicer) packetMatchesUserNet(packet []byte) bool {
@@ -165,8 +166,12 @@ func (sb *sharedBuf) Close() {
 func (sb *sharedBuf) Write(packet []byte) {
 	sb.lock.Lock()
 	defer sb.lock.Unlock()
-	for len(sb.buffer) <= sb.lastIdx {
+	for len(sb.buffer) <= sb.lastIdx && !sb.closed {
 		sb.cond.Wait()
+	}
+
+	if sb.closed {
+		return
 	}
 
 	sb.lastIdx += 1
@@ -272,13 +277,13 @@ func rewriteIncomingHeader(packet []byte, v4Destination, v6Destination tcpip.Add
 	case 4:
 		rewriteIncomingHeader4(packet, v4Destination)
 	case 6:
-		rewriteOutgoingHeader6(packet, v6Destination)
+		rewriteIncomingHeader6(packet, v6Destination)
 	default:
 	}
 }
 
 func rewriteOutgoingHeader4(packet []byte, source tcpip.Address) {
-	if len(packet) > header.IPv4MinimumSize {
+	if len(packet) < header.IPv4MinimumSize {
 		return
 	}
 
@@ -298,12 +303,12 @@ func rewriteOutgoingHeader4(packet []byte, source tcpip.Address) {
 }
 
 func rewriteIncomingHeader4(packet []byte, destination tcpip.Address) {
-	if len(packet) > header.IPv4MinimumSize {
+	if len(packet) < header.IPv4MinimumSize {
 		return
 	}
 
 	ipHeader := header.IPv4(packet)
-	ipHeader.SetSourceAddressWithChecksumUpdate(destination)
+	ipHeader.SetDestinationAddressWithChecksumUpdate(destination)
 	switch ipHeader.TransportProtocol() {
 	case header.TCPProtocolNumber:
 		rewriteTcpHeader(ipHeader.SourceAddress(), ipHeader.DestinationAddress(), ipHeader.Payload())
@@ -317,12 +322,12 @@ func rewriteIncomingHeader4(packet []byte, destination tcpip.Address) {
 }
 
 func rewriteOutgoingHeader6(packet []byte, source tcpip.Address) {
-	if len(packet) > header.IPv6MinimumSize {
+	if len(packet) < header.IPv6MinimumSize {
 		return
 	}
 
 	ipHeader := header.IPv6(packet)
-	ipHeader.SetDestinationAddress(source)
+	ipHeader.SetSourceAddress(source)
 	switch ipHeader.TransportProtocol() {
 	case header.TCPProtocolNumber:
 		rewriteTcpHeader(ipHeader.SourceAddress(), ipHeader.DestinationAddress(), ipHeader.Payload())
@@ -336,7 +341,7 @@ func rewriteOutgoingHeader6(packet []byte, source tcpip.Address) {
 }
 
 func rewriteIncomingHeader6(packet []byte, destination tcpip.Address) {
-	if len(packet) > header.IPv6MinimumSize {
+	if len(packet) < header.IPv6MinimumSize {
 		return
 	}
 
@@ -361,12 +366,17 @@ func rewriteUdpHeader(source, destination tcpip.Address, packet []byte) {
 
 	udpHeader := header.UDP(packet)
 	udpHeader.SetChecksum(0)
-	udpHeader.SetChecksum(^udpHeader.CalculateChecksum(header.PseudoHeaderChecksum(
-		header.UDPProtocolNumber,
-		source,
-		destination,
-		uint16(len(packet)),
-	)))
+	xsum := header.PseudoHeaderChecksum(header.UDPProtocolNumber, source, destination, udpHeader.Length())
+	xsum = checksum.Combine(xsum, checksum.Checksum(udpHeader.Payload(), 0))
+
+	if xsum != math.MaxUint16 {
+		xsum = ^xsum
+	}
+	udpHeader.SetChecksum(xsum)
+	if !udpHeader.IsChecksumValid(source, destination, checksum.Checksum(udpHeader.Payload(), 0)) {
+		panic("udp checksum not valid")
+	}
+
 }
 
 func rewriteTcpHeader(source, destination tcpip.Address, packet []byte) {
@@ -374,15 +384,19 @@ func rewriteTcpHeader(source, destination tcpip.Address, packet []byte) {
 		return
 	}
 
+
 	tcpHeader := header.TCP(packet)
 	tcpHeader.SetChecksum(0)
-	tcpHeader.SetChecksum(^tcpHeader.CalculateChecksum(header.PseudoHeaderChecksum(
+	xsum := header.PseudoHeaderChecksum(
 		header.TCPProtocolNumber,
 		source,
 		destination,
 		uint16(len(packet)),
-	)))
+	)
+	xsum = checksum.Checksum(tcpHeader.Payload(), xsum)
+	tcpHeader.SetChecksum(^tcpHeader.CalculateChecksum(xsum))
 }
+
 func rewriteIcmp4Header(source, destination tcpip.Address, packet []byte) {
 	if len(packet) < header.ICMPv4MinimumSize {
 		return
