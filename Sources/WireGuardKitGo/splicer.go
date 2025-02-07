@@ -274,7 +274,7 @@ func rewriteOutgoingHeader(packet []byte, v4Source, v6Source tcpip.Address) {
 }
 
 func rewriteIncomingHeader(packet []byte, v4Destination, v6Destination tcpip.Address) {
-	if len(packet) > header.IPv4MinimumSize {
+	if len(packet) < header.IPv4MinimumSize {
 		return
 	}
 
