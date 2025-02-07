@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"io"
 	"math"
 	"net/netip"
@@ -247,12 +246,7 @@ func (s SplicedTun) Read(packet []byte, offset int) (int, error) {
 	if isClosed {
 		return 0, io.EOF
 	}
-	fmt.Printf("slice before - %v\n", packet[0:120])
 	rewriteOutgoingHeader(packet[offset:n], s.userSource4, s.userSource6)
-	fmt.Printf("slice after - %v\n", packet[0:120])
-	// if header.IPv4(packet[offset:n]).SourceAddress() != s.userSource4 || header.IPv6(packet[offset:n]).SourceAddress() != s.userSource6 {
-	// 	panic(fmt.Sprintf("EXPECTED SOURCE ADDRESS TO BE EITHER %s or %s, got %s", s.userSource4, s.userSource6, header.IPv4(packet[offset:n]).SourceAddress()))
-	// }
 
 	return n, nil
 }
@@ -269,8 +263,6 @@ func rewriteOutgoingHeader(packet []byte, v4Source, v6Source tcpip.Address) {
 		rewriteOutgoingHeader6(packet, v6Source)
 	default:
 	}
-
-	fmt.Printf("slice at end of rewrite outgoing header - %v\n", packet[0:120])
 }
 
 func rewriteIncomingHeader(packet []byte, v4Destination, v6Destination tcpip.Address) {
