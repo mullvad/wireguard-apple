@@ -20,8 +20,10 @@ func TestSplicedTun(t *testing.T) {
 	splicer, splicedTun := NewSplicer(a, userSubnets, sourceAddress, netip.IPv6Unspecified(), userAddress, netip.IPv6Unspecified())
 
 	go func() {
-		packetBuf := [1700]byte{}
-		splicer.Read(packetBuf[:], 0)
+		for {
+			packetBuf := [1700]byte{}
+			splicer.Read(packetBuf[:], 0)
+		}
 	}()
 
 	conn, err := aNet.DialUDPAddrPort(netip.AddrPortFrom(aIp, 0), netip.MustParseAddrPort("172.16.10.2:80"))
@@ -36,11 +38,28 @@ func TestSplicedTun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to read packet from splicedTun: %v", err)
 	}
+	readPacket := header.IPv4(packetBuf[:n])
+
 	expectedPacketSize := header.IPv4MinimumSize + header.UDPMinimumSize + 6
 	if n != expectedPacketSize {
 		t.Fatalf("Expeceted a packet of size %d, got size %d", expectedPacketSize, n)
-
 	}
+
+	if !readPacket.IsValid(n) {
+		t.Fatalf("IPv4 checksum invalid")
+	}
+
+	udpPacket := header.UDP(readPacket.Payload())
+
+	payloadChecksum := checksum.Checksum(udpPacket.Payload(), 0)
+	if !udpPacket.IsChecksumValid(readPacket.SourceAddress(), readPacket.DestinationAddress(), payloadChecksum) {
+		t.Fatalf("UDP packet not valid")
+	}
+
+	if readPacket.SourceAddress() != tcpip.AddrFromSlice(userAddress.AsSlice()) {
+		t.Fatalf("Expected user address (%v) and source address (%v) to be the same", userAddress, readPacket.SourceAddress())
+	}
+
 }
 
 func TestSplicer(t *testing.T) {
@@ -142,22 +161,23 @@ func TestSplicerMultipleUdp(t *testing.T) {
 	// conn.Write([]byte{1, 2, 3, 4, 5, 6})
 
 	// packetBuf := [1700]byte{}
-	// _, err = splicer.Read(packetBuf[:], 0)
+	// n, err := splicer.Read(packetBuf[:], 0)
 	// if err != nil {
 	// 	t.Fatalf("Failed to read packet from splicedTun: %v", err)
 	// }
+	// recvPacket := header.IPv4(packetBuf[:n])
 
 	// listenIpAddr := tcpip.AddrFromSlice(listenAddr.Addr().AsSlice())
 	// clientIpAddr := tcpip.AddrFromSlice(clientAddr.Addr().AsSlice())
 	// for i := 0; i < 10; i += 1 {
-	// 	packet := constructValidUdpPacket(clientIpAddr, listenIpAddr, clientAddr.Port(), listenAddr.Port(), []byte{1, 2, 3})
-
+	// 	packet := constructValidUdpPacket(recvPacket, listenIpAddr, clientIpAddr, clientAddr.Port(), listenAddr.Port(), []byte{1, 2, 3})
 	// 	_, err := splicer.Write(packet, 0)
 	// 	if err != nil {
 	// 		t.Fatalf("Experienced a write error - %s", err)
 	// 	}
 	// 	var buf [1700]byte
 	// 	n, err := conn.Read(buf[:])
+	// 	panic("wrote")
 	// 	if err != nil {
 	// 		t.Fatalf("Failed to receive UDP packet")
 	// 	}
@@ -167,18 +187,18 @@ func TestSplicerMultipleUdp(t *testing.T) {
 	// }
 }
 
-func constructValidUdpPacket(source, destination tcpip.Address, sourcePort uint16, destPort uint16, payload []byte) []byte {
+func constructValidUdpPacket(receivedPacket header.IPv4, source, destination tcpip.Address, sourcePort uint16, destPort uint16, payload []byte) []byte {
 	packet := [1700]byte{}
 	ipPacket := header.IPv4(packet[:])
 
 	ipv4Fields := header.IPv4Fields{
 		TOS:            0,
 		TotalLength:    uint16(header.IPv4MinimumSize + header.UDPMinimumSize + len(payload)),
-		ID:             1,
+		ID:             253,
 		Flags:          0,
 		FragmentOffset: 0,
 		TTL:            63,
-		Protocol:       4,
+		Protocol:       uint8(header.UDPProtocolNumber),
 		Checksum:       0,
 		SrcAddr:        source,
 		DstAddr:        destination,
@@ -205,12 +225,14 @@ func constructValidUdpPacket(source, destination tcpip.Address, sourcePort uint1
 	xsum = udpHeader.CalculateChecksum(xsum)
 
 	udpHeader.SetChecksum(^xsum)
+	if !udpHeader.IsChecksumValid(source, destination, payloadXsum) {
+		panic("checksum invalid")
+	}
 
 	return packet[:ipPacket.TotalLength()]
-
 }
 
-func TestRewritev4TcpHeader(t *testing.T) {
+func TestRewriteV4TCP(t *testing.T) {
 	newSource := ipFromStr("1.2.3.4")
 	newDestination := ipFromStr("1.2.3.5")
 
