@@ -188,6 +188,7 @@ func (sb *sharedBuf) Read(packet []byte) (int, bool) {
 	for sb.lastIdx < 0 && !sb.closed {
 		sb.cond.Wait()
 	}
+
 	if sb.closed {
 		return 0, true
 	}

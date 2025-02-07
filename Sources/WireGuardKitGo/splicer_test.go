@@ -200,6 +200,58 @@ func TestSplicerMultipleUdp(t *testing.T) {
 	}
 }
 
+func TestSplicedMultipleUdp(t *testing.T) {
+	a, aNet, _ := netstack.CreateNetTUN([]netip.Addr{aIp}, []netip.Addr{}, 1420)
+	userSubnets := []netip.Prefix{netip.MustParsePrefix("172.16.10.0/24")}
+	sourceAddress := aIp
+	userAddress := netip.MustParseAddr("172.16.10.3")
+
+	splicer, splicedTun := NewSplicer(a, userSubnets, sourceAddress, netip.IPv6Unspecified(), userAddress, netip.IPv6Unspecified())
+
+	listenAddr := netip.MustParseAddrPort("172.16.10.2:80")
+	clientAddr := netip.AddrPortFrom(aIp, 123)
+	conn, err := aNet.DialUDPAddrPort(clientAddr, listenAddr)
+
+	go func() {
+		var err error
+		err = nil
+		var buf [1700]byte
+		for err == nil {
+			_, err = splicer.Read(buf[:], 0)
+		}
+	}()
+
+	if err != nil {
+		t.Fatalf("Failed to open UDP connection")
+	}
+	conn.Write([]byte{1, 2, 3, 4, 5, 6})
+
+	backingBuf := [1700]byte{}
+	packetBuf := header.IPv4(backingBuf[:])
+	_, err = splicedTun.Read(packetBuf[:], 0)
+	if err != nil {
+		t.Fatalf("Failed to read packet from splicedTun: %v", err)
+	}
+
+	recvUdpHeader := header.UDP(packetBuf.Payload())
+
+	for i := 0; i < 10; i += 1 {
+		packet := constructValidUdpPacket(packetBuf.DestinationAddress(), packetBuf.SourceAddress(), recvUdpHeader.DestinationPort(), recvUdpHeader.SourcePort(), []byte{1, 2, 3})
+		_, err := splicedTun.Write(packet, 0)
+		if err != nil {
+			t.Fatalf("Experienced a write error - %s", err)
+		}
+		var buf [1700]byte
+		n, err := conn.Read(buf[:])
+		if err != nil {
+			t.Fatalf("Failed to receive UDP packet")
+		}
+		if n != 3 {
+			t.Fatalf("Expected to receive a packet with a payload of 3, instead got %d", n)
+		}
+	}
+}
+
 func constructValidUdpPacket(source, destination tcpip.Address, sourcePort, destPort uint16, payload []byte) []byte {
 	packet := [1700]byte{}
 	ipPacket := header.IPv4(packet[:])
