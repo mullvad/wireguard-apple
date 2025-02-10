@@ -5,6 +5,7 @@
 
 package main
 
+// #include <string.h>
 // #include <stdint.h>
 // #include <stdlib.h>
 // #include <sys/types.h>
@@ -19,6 +20,10 @@ typedef struct {
     double maybeNotMaxPadding;
     double maybeNotMaxBlocking;
 } DaitaGoParameters;
+
+typedef struct {
+	void* inner;
+} WireGuardParameters;
 */
 import "C"
 import (
@@ -30,6 +35,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"runtime/cgo"
 	"runtime/debug"
 	"strings"
 	"time"
@@ -82,7 +88,9 @@ public_key=d346b22107b1f7ac4ce9e32cde75516da96717aabed1641199ec635f21bc0f71
 endpoint=31.211.255.213:4848
 allowed_ip=172.16.25.0/24
 allowed_ip=172.16.10.0/24
-allowed_ip=31.211.255.213/32`
+allowed_ip=31.211.255.213/32
+
+`
 
 var loggerFunc unsafe.Pointer
 var loggerCtx unsafe.Pointer
@@ -260,8 +268,106 @@ func wgTurnOnMultihop(exitSettings *C.char, entrySettings *C.char, privateIp *C.
 	return wgTurnOnMultihopInner(tun, exitSettings, entrySettings, privateIp, exitMtu, logger, maybenotMachines, daitaParameters)
 }
 
+type WGParameters struct {
+	exitSettings  string
+	entrySettings *string
+	privateIP     *netip.Addr
+	privateIP6    *netip.Addr
+	userSettings  *string
+	userSource4   *netip.Addr
+	userSource6   *netip.Addr
+	daitaParameters C.DaitaGoParameters
+	daitaMachines string
+}
+
+// Initializes an instance of WireGuardParameters with a valid exit config.
+// `exitSettings` must point to a valid nul-terminated string, with the string
+// containing a valid WireGuard configuration for the exit tunnel.
+//
+//export wgParamsInit
+func wgParamsInit(exitSettings *C.char) C.WireGuardParameters {
+	params := WGParameters{
+		exitSettings: C.GoString(exitSettings),
+	}
+	handle := cgo.NewHandle(&params)
+
+	return C.WireGuardParameters{inner: unsafe.Pointer(handle)}
+}
+
+// Set private IPs for the tunnel. privateIP4 is not optional, privateIP6 can
+// be nil. This call is obligatory if user or entry configs are supplied, i.e.
+// `wgParamsSetUser` or `wgParamsSetEntry` are called.
+//
+//export wgParamsSetPrivateIps
+func wgParamsSetPrivateIps(paramsHandle C.WireGuardParameters, privateIP4 *C.char, privateIP6 *C.char) int {
+	handle := *(*cgo.Handle)(paramsHandle.inner)
+	params := handle.Value().(*WGParameters)
+
+	privateAddrStr := C.GoString(privateIP4)
+	privateAddr, err := netip.ParseAddr(privateAddrStr)
+	if err != nil {
+		return errBadIPString
+	}
+
+	params.privateIP = &privateAddr
+
+	if privateIP6 != nil {
+		privateAddrStr := C.GoString(privateIP6)
+		privateAddr6, err := netip.ParseAddr(privateAddrStr)
+		if err != nil {
+			return errBadIPString
+		}
+		params.privateIP6 = &privateAddr6
+	}
+	return 0
+}
+
+//export wgParamsSetEntry
+func wgParamsSetEntry(paramsHandle C.WireGuardParameters, entryConfig *C.char) int {
+	handle := *(*cgo.Handle)(paramsHandle.inner)
+	params := handle.Value().(*WGParameters)
+
+	entrySettings := C.GoString(entryConfig)
+	params.entrySettings = &entrySettings
+	return 0
+}
+
+//export wgParamsSetUser
+func wgParamsSetUser(paramsHandle C.WireGuardParameters, userConfig *C.char) int {
+	handle := *(*cgo.Handle)(paramsHandle.inner)
+	params := handle.Value().(*WGParameters)
+
+	userSettings := C.GoString(userConfig)
+	params.userSettings = &userSettings
+	return 0
+}
+
+func wgParamsSetDaita(paramsHandle C.WireGuardParameters, daitaParams C.DaitaGoParameters, daitaMachines *C.char) int {
+	handle := *(*cgo.Handle)(paramsHandle.inner)
+	params := handle.Value().(*WGParameters)
+
+	params.daitaParameters = daitaParams
+	params.daitaMachines = C.GoString(daitaMachines)
+
+	return 0
+}
+
+//export wgParamsDestroy
+func wgParamsDestroy(paramsHandle C.WireGuardParameters) {
+	handle := *(*cgo.Handle)(paramsHandle.inner)
+	handle.Delete()
+}
+
+func (p WGParameters) RootDevice(tunFd int32) (tun.Device, error) {
+	return nil, nil
+}
+
 //export wgTurnOn
-func wgTurnOn(settings *C.char, tunFd int32, maybeNotMachines *C.char, daitaParameters *C.DaitaGoParameters) int32 {
+func wgTurnOn(paramsHandle C.WireGuardParameters, tunFd int32, maybeNotMachines *C.char, daitaParameters *C.DaitaGoParameters) int32 {
+	handle := *(*cgo.Handle)(paramsHandle.inner)
+	params := handle.Value().(*WGParameters)
+
+
 	logger := &device.Logger{
 		Verbosef: CLogger(0).Printf,
 		Errorf:   CLogger(1).Printf,
