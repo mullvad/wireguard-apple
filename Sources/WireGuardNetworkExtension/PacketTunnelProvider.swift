@@ -95,11 +95,9 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         guard let completionHandler = completionHandler else { return }
 
         if messageData.count == 1 && messageData[0] == 0 {
-            adapter.getRuntimeConfiguration { settings in
+            if let settings = adapter.getRuntimeConfiguration() {
                 var data: Data?
-                if let settings = settings {
                     data = settings.data(using: .utf8)!
-                }
                 completionHandler(data)
             }
         } else {
