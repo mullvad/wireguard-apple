@@ -174,6 +174,7 @@ func (p *WGParameters) WireGuardDevices(tunFd int32, logger *device.Logger) (*tu
 		} else {
 			errCode = p.ConfigureDaita(entry)
 		}
+		logger.Verbosef("Configured DAITA")
 	}
 
 	return &handle, errCode
