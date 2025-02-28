@@ -80,6 +80,11 @@ const (
 	errTCPNoSocket = -21
 	errTCPWrite    = -22
 	errTCPRead     = -23
+	//params error
+	errNoUserIp       = -24
+	errNoPrivateIp    = -25
+	errNoIPv6         = -26
+	errNoUserPrefixes = -27
 )
 
 var wgEmilConfig string = `private_key=a8903e3b69923ab720cf63f63ea44efa6f9a247bf98b2d4428a1608629a1c251
@@ -224,7 +229,7 @@ func wgTurnOnMultihopInner(tun tun.Device, exitSettings *C.char, entrySettings *
 	subnet3 := netip.MustParsePrefix("31.211.255.213/32")
 	userIp := netip.MustParseAddr("172.16.25.10")
 
-	splicer, splicedTun := NewSplicer(tun, []netip.Prefix{subnet1, subnet2, subnet3}, ip, netip.IPv6Unspecified(), userIp, netip.IPv6Unspecified())
+	splicer, splicedTun := NewSplicer(tun, []netip.Prefix{subnet1, subnet2, subnet3}, ip, netip.IPv6Unspecified(), userIp, nil)
 	userDev := device.NewDevice(&splicedTun, conn.NewDefaultBind(), logger)
 
 	entryDev := device.NewDevice(&singletun, conn.NewStdNetBind(), logger)
@@ -266,18 +271,6 @@ func wgTurnOnMultihop(exitSettings *C.char, entrySettings *C.char, privateIp *C.
 	}
 
 	return wgTurnOnMultihopInner(tun, exitSettings, entrySettings, privateIp, exitMtu, logger, maybenotMachines, daitaParameters)
-}
-
-type WGParameters struct {
-	exitSettings  string
-	entrySettings *string
-	privateIP     *netip.Addr
-	privateIP6    *netip.Addr
-	userSettings  *string
-	userSource4   *netip.Addr
-	userSource6   *netip.Addr
-	daitaParameters C.DaitaGoParameters
-	daitaMachines string
 }
 
 // Initializes an instance of WireGuardParameters with a valid exit config.
@@ -342,12 +335,11 @@ func wgParamsSetUser(paramsHandle C.WireGuardParameters, userConfig *C.char) int
 	return 0
 }
 
-func wgParamsSetDaita(paramsHandle C.WireGuardParameters, daitaParams C.DaitaGoParameters, daitaMachines *C.char) int {
+func wgParamsSetDaita(paramsHandle C.WireGuardParameters, daitaParams *C.DaitaGoParameters, daitaMachines *C.char) int {
 	handle := *(*cgo.Handle)(paramsHandle.inner)
 	params := handle.Value().(*WGParameters)
 
-	params.daitaParameters = daitaParams
-	params.daitaMachines = C.GoString(daitaMachines)
+	params.daitaParameters = daitaParametersFromRaw(daitaMachines, daitaParams)
 
 	return 0
 }
@@ -358,19 +350,17 @@ func wgParamsDestroy(paramsHandle C.WireGuardParameters) {
 	handle.Delete()
 }
 
-func (p WGParameters) RootDevice(tunFd int32) (tun.Device, error) {
-	return nil, nil
-}
-
 //export wgTurnOn
-func wgTurnOn(paramsHandle C.WireGuardParameters, tunFd int32, maybeNotMachines *C.char, daitaParameters *C.DaitaGoParameters) int32 {
+func wgTurnOn(paramsHandle C.WireGuardParameters, tunFd int32) int32 {
 	handle := *(*cgo.Handle)(paramsHandle.inner)
 	params := handle.Value().(*WGParameters)
-
 
 	logger := &device.Logger{
 		Verbosef: CLogger(0).Printf,
 		Errorf:   CLogger(1).Printf,
+	}
+	if errCode := params.Validate(logger); errCode != 0 {
+		return errCode
 	}
 
 	tun, errCode := openTUNFromSocket(tunFd, logger)
@@ -381,8 +371,7 @@ func wgTurnOn(paramsHandle C.WireGuardParameters, tunFd int32, maybeNotMachines 
 	logger.Verbosef("Attaching to interface")
 	dev := device.NewDevice(tun, conn.NewStdNetBind(), logger)
 
-	daitaParams := daitaParametersFromRaw(maybeNotMachines, daitaParameters)
-	return addTunnelFromDevice(dev, nil, C.GoString(settings), "", nil, logger, daitaParams, nil)
+	return addTunnelFromDevice(dev, nil, params.exitSettings, "", nil, logger, params.daitaParameters, nil)
 }
 
 func wgTurnOnIANFromExistingTunnel(tun tun.Device, settings string, privateAddr netip.Addr, daitaParameters *daitaParameters) int32 {

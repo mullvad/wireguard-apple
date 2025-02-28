@@ -19,11 +19,17 @@ type Splicer struct {
 	targetNetworks []netip.Prefix
 }
 
-func NewSplicer(tun tun.Device, subnets []netip.Prefix, source4Address, source6Address, user4Address, user6Address netip.Addr) (Splicer, SplicedTun) {
+func NewSplicer(tun tun.Device, subnets []netip.Prefix, source4Address, source6Address, user4Address netip.Addr, user6Address *netip.Addr) (Splicer, SplicedTun) {
 	sharedBuf := newSharedBuf()
 
 	splicer := Splicer{
 		tun, &sharedBuf, subnets,
+	}
+
+	var optionalV6SourceAddress *tcpip.Address
+	if user6Address != nil {
+		v6SourceAddress := tcpip.AddrFromSlice(user6Address.AsSlice())
+		optionalV6SourceAddress = &v6SourceAddress
 	}
 
 	splicedTun := SplicedTun{
@@ -32,7 +38,7 @@ func NewSplicer(tun tun.Device, subnets []netip.Prefix, source4Address, source6A
 		tcpip.AddrFromSlice(source4Address.AsSlice()),
 		tcpip.AddrFromSlice(source6Address.AsSlice()),
 		tcpip.AddrFromSlice(user4Address.AsSlice()),
-		tcpip.AddrFromSlice(user6Address.AsSlice()),
+		optionalV6SourceAddress,
 	}
 
 	return splicer, splicedTun
@@ -207,7 +213,7 @@ type SplicedTun struct {
 	realSource6 tcpip.Address
 
 	userSource4 tcpip.Address
-	userSource6 tcpip.Address
+	userSource6 *tcpip.Address
 }
 
 // Close implements tun.Device.
@@ -247,12 +253,13 @@ func (s SplicedTun) Read(packet []byte, offset int) (int, error) {
 	if isClosed {
 		return 0, io.EOF
 	}
+
 	rewriteOutgoingHeader(packet[offset:n], s.userSource4, s.userSource6)
 
 	return n, nil
 }
 
-func rewriteOutgoingHeader(packet []byte, v4Source, v6Source tcpip.Address) {
+func rewriteOutgoingHeader(packet []byte, v4Source tcpip.Address, v6Source *tcpip.Address) {
 	if len(packet) < header.IPv4MinimumSize {
 		return
 	}
@@ -261,12 +268,14 @@ func rewriteOutgoingHeader(packet []byte, v4Source, v6Source tcpip.Address) {
 	case 4:
 		rewriteOutgoingHeader4(packet, v4Source)
 	case 6:
-		rewriteOutgoingHeader6(packet, v6Source)
+		if v6Source != nil {
+			rewriteOutgoingHeader6(packet, *v6Source)
+		}
 	default:
 	}
 }
 
-func rewriteIncomingHeader(packet []byte, v4Destination, v6Destination tcpip.Address) {
+func rewriteIncomingHeader(packet []byte, v4Destination tcpip.Address, v6Destination *tcpip.Address) {
 	if len(packet) < header.IPv4MinimumSize {
 		return
 	}
@@ -276,7 +285,9 @@ func rewriteIncomingHeader(packet []byte, v4Destination, v6Destination tcpip.Add
 	case 4:
 		rewriteIncomingHeader4(packet, v4Destination)
 	case 6:
-		rewriteIncomingHeader6(packet, v6Destination)
+		if v6Destination != nil {
+			rewriteIncomingHeader6(packet, *v6Destination)
+		}
 	default:
 	}
 }
@@ -431,6 +442,6 @@ func rewriteIcmp6Header(source, destination tcpip.Address, packet []byte) {
 
 // Write implements tun.Device.
 func (s SplicedTun) Write(packet []byte, offset int) (int, error) {
-	rewriteIncomingHeader(packet[offset:], s.realSource4, s.realSource6)
+	rewriteIncomingHeader(packet[offset:], s.realSource4, &s.realSource6)
 	return s.parentTun.Write(packet, offset)
 }

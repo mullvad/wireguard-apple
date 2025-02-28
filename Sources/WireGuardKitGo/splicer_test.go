@@ -18,7 +18,7 @@ func TestSplicedTun(t *testing.T) {
 	sourceAddress := aIp
 	userAddress := netip.MustParseAddr("172.16.10.3")
 
-	splicer, splicedTun := NewSplicer(a, userSubnets, sourceAddress, netip.IPv6Unspecified(), userAddress, netip.IPv6Unspecified())
+	splicer, splicedTun := NewSplicer(a, userSubnets, sourceAddress, netip.IPv6Unspecified(), userAddress, nil)
 
 	go func() {
 		for {
@@ -82,7 +82,7 @@ func TestSplicer(t *testing.T) {
 	sourceAddress := aIp
 	userAddress := netip.MustParseAddr("172.16.10.3")
 
-	splicer, _ := NewSplicer(a, userSubnets, sourceAddress, netip.IPv6Unspecified(), userAddress, netip.IPv6Unspecified())
+	splicer, _ := NewSplicer(a, userSubnets, sourceAddress, netip.IPv6Unspecified(), userAddress, nil)
 
 	conn, err := aNet.DialUDPAddrPort(netip.AddrPortFrom(aIp, 0), netip.MustParseAddrPort("172.16.9.2:80"))
 
@@ -109,7 +109,7 @@ func TestSplicerSplitting(t *testing.T) {
 	sourceAddress := aIp
 	userAddress := netip.MustParseAddr("172.16.10.3")
 
-	splicer, _ := NewSplicer(a, userSubnets, sourceAddress, netip.IPv6Unspecified(), userAddress, netip.IPv6Unspecified())
+	splicer, _ := NewSplicer(a, userSubnets, sourceAddress, netip.IPv6Unspecified(), userAddress, nil)
 
 	var matchingPacketBuf [1700]byte
 	matchingDestIp := netip.MustParseAddr("172.16.10.15")
@@ -163,7 +163,7 @@ func TestSplicerMultipleUdp(t *testing.T) {
 	sourceAddress := aIp
 	userAddress := netip.MustParseAddr("172.16.10.3")
 
-	splicer, _ := NewSplicer(a, userSubnets, sourceAddress, netip.IPv6Unspecified(), userAddress, netip.IPv6Unspecified())
+	splicer, _ := NewSplicer(a, userSubnets, sourceAddress, netip.IPv6Unspecified(), userAddress, nil)
 
 	listenAddr := netip.MustParseAddrPort("172.16.9.2:80")
 	clientAddr := netip.AddrPortFrom(aIp, 123)
@@ -206,7 +206,7 @@ func TestSplicedMultipleUdp(t *testing.T) {
 	sourceAddress := aIp
 	userAddress := netip.MustParseAddr("172.16.10.3")
 
-	splicer, splicedTun := NewSplicer(a, userSubnets, sourceAddress, netip.IPv6Unspecified(), userAddress, netip.IPv6Unspecified())
+	splicer, splicedTun := NewSplicer(a, userSubnets, sourceAddress, netip.IPv6Unspecified(), userAddress, nil)
 
 	listenAddr := netip.MustParseAddrPort("172.16.10.2:80")
 	clientAddr := netip.AddrPortFrom(aIp, 123)
