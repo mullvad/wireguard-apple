@@ -144,26 +144,33 @@ struct DeviceConfiguration {
         for peer in configuration.peers {
             for addressRange in peer.allowedIPs {
                 if addressRange.address is IPv4Address {
-                    ipv4IncludedRoutes.append(NEIPv4Route(destinationAddress: "\(addressRange.address)", subnetMask: "\(addressRange.subnetMask())"))
+                    ipv4IncludedRoutes.append(NEIPv4Route(
+                        destinationAddress: "\(addressRange.address)",
+                        subnetMask: "\(addressRange.subnetMask())"
+                    ))
                 } else if addressRange.address is IPv6Address {
-                    ipv6IncludedRoutes.append(NEIPv6Route(destinationAddress: "\(addressRange.address)", networkPrefixLength: NSNumber(value: addressRange.networkPrefixLength)))
+                    ipv6IncludedRoutes.append(NEIPv6Route(
+                        destinationAddress: "\(addressRange.address)",
+                        networkPrefixLength: NSNumber(value: addressRange.networkPrefixLength)
+                    ))
                 }
             }
         }
         return (ipv4IncludedRoutes, ipv6IncludedRoutes)
     }
-
 }
 
 class PacketTunnelSettingsGenerator {
     let exit: DeviceConfiguration
     let entry: DeviceConfiguration?
+    let user: DeviceConfiguration?
     let daita: DaitaConfiguration?
 
-    init(exit: DeviceConfiguration, entry: DeviceConfiguration? = nil, daita: DaitaConfiguration? = nil) {
+    init(exit: DeviceConfiguration, entry: DeviceConfiguration? = nil, daita: DaitaConfiguration? = nil, userConfiguration: DeviceConfiguration? = nil) {
         self.exit = exit
         self.entry = entry
         self.daita = daita
+        self.user = userConfiguration
     }
 
     func entryUapiConfiguration() -> (String, [EndpointResolutionResult?])? {
@@ -172,6 +179,15 @@ class PacketTunnelSettingsGenerator {
         } else {
             nil
         }
+    }
+    
+    func userUapiConfiguration() -> (String, [EndpointResolutionResult?])? {
+        if let user {
+            uapiConfiguration(for: user)
+        } else {
+            nil
+        }
+        
     }
 
     private func uapiConfiguration(for device: DeviceConfiguration) -> (String, [EndpointResolutionResult?]) {

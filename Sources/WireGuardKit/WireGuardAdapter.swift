@@ -486,6 +486,7 @@ public class WireGuardAdapter {
         privateAddress4: IPv4Address,
         privateAddress6: IPv6Address,
         entryWgConfig: String? = nil,
+        userWgConfig: String? = nil,
         mtu: UInt16 = 1280,
         daita: DaitaConfiguration?
     ) throws -> Int32 {
