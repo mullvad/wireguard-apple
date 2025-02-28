@@ -21,8 +21,7 @@ typedef struct {
 	void* inner;
 } WireGuardParameters;
 
-extern WireGuardParameters wgParamsInit(char *exitConfig);
-extern int wgParamsSetPrivateIps(WireGuardParameters params, char* privateIp4, char *privateIp6);
+extern WireGuardParameters wgParamsInit(char *exitConfig, char* privateIp4, char *privateIp6);
 extern int wgParamsSetEntry(WireGuardParameters params, char *entryConfig);
 extern int wgParamsSetUser(WireGuardParameters params, char *userConfig, char* userIp4, char* userIp6);
 extern int wgParamsSetDaita(WireGuardParameters params, DaitaGoParameters daitaGoParameters, char* maybenotMachines);

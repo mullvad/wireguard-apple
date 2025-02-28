@@ -81,10 +81,11 @@ const (
 	errTCPWrite    = -22
 	errTCPRead     = -23
 	//params error
-	errNoUserIp       = -24
-	errNoPrivateIp    = -25
-	errNoIPv6         = -26
-	errNoUserPrefixes = -27
+	errNoUserIp          = -24
+	errNoPrivateIp       = -25
+	errNoIPv6            = -26
+	errNoUserPrefixes    = -27
+	errNoDaitaParameters = -28
 )
 
 var wgEmilConfig string = `private_key=a8903e3b69923ab720cf63f63ea44efa6f9a247bf98b2d4428a1608629a1c251
@@ -275,44 +276,32 @@ func wgTurnOnMultihop(exitSettings *C.char, entrySettings *C.char, privateIp *C.
 
 // Initializes an instance of WireGuardParameters with a valid exit config.
 // `exitSettings` must point to a valid nul-terminated string, with the string
-// containing a valid WireGuard configuration for the exit tunnel.
+// containing a valid WireGuard configuration for the exit tunnel. Both IP
+// address parameters must not be null, and must be poitners to a valid C
+// string, with IPv4 and IPv6 address representations respectively.
 //
 //export wgParamsInit
-func wgParamsInit(exitSettings *C.char) C.WireGuardParameters {
+func wgParamsInit(exitSettings *C.char, privateIP4 *C.char, privateIP6 *C.char) C.WireGuardParameters {
 	params := WGParameters{
 		exitSettings: C.GoString(exitSettings),
 	}
 	handle := cgo.NewHandle(&params)
 
-	return C.WireGuardParameters{inner: unsafe.Pointer(handle)}
-}
-
-// Set private IPs for the tunnel. privateIP4 is not optional, privateIP6 can
-// be nil. This call is obligatory if user or entry configs are supplied, i.e.
-// `wgParamsSetUser` or `wgParamsSetEntry` are called.
-//
-//export wgParamsSetPrivateIps
-func wgParamsSetPrivateIps(paramsHandle C.WireGuardParameters, privateIP4 *C.char, privateIP6 *C.char) int {
-	handle := *(*cgo.Handle)(paramsHandle.inner)
-	params := handle.Value().(*WGParameters)
-
 	privateAddrStr := C.GoString(privateIP4)
 	privateAddr, err := netip.ParseAddr(privateAddrStr)
 	if err != nil {
-		return errBadIPString
+		return C.WireGuardParameters{inner: nil}
 	}
+	params.privateIP = privateAddr
 
-	params.privateIP = &privateAddr
-
-	if privateIP6 != nil {
-		privateAddrStr := C.GoString(privateIP6)
-		privateAddr6, err := netip.ParseAddr(privateAddrStr)
-		if err != nil {
-			return errBadIPString
-		}
-		params.privateIP6 = &privateAddr6
+	privateAddrStr = C.GoString(privateIP6)
+	privateAddr6, err := netip.ParseAddr(privateAddrStr)
+	if err != nil {
+		return C.WireGuardParameters{inner: nil}
 	}
-	return 0
+	params.privateIP6 = privateAddr6
+
+	return C.WireGuardParameters{inner: unsafe.Pointer(handle)}
 }
 
 //export wgParamsSetEntry
@@ -326,12 +315,30 @@ func wgParamsSetEntry(paramsHandle C.WireGuardParameters, entryConfig *C.char) i
 }
 
 //export wgParamsSetUser
-func wgParamsSetUser(paramsHandle C.WireGuardParameters, userConfig *C.char) int {
+func wgParamsSetUser(paramsHandle C.WireGuardParameters, userConfig *C.char, userIp4, userIp6 *C.char) int {
 	handle := *(*cgo.Handle)(paramsHandle.inner)
 	params := handle.Value().(*WGParameters)
 
 	userSettings := C.GoString(userConfig)
 	params.userSettings = &userSettings
+
+	if userIp4 == nil {
+		return errBadIPString
+	}
+	ip4, err := netip.ParseAddr(C.GoString(userIp4))
+	if err != nil {
+		return errBadIPString
+	}
+	params.userSource4 = &ip4
+
+	if userIp6 != nil {
+		ip6, err := netip.ParseAddr(C.GoString(userIp6))
+		if err != nil {
+			return errBadIPString
+		}
+		params.userSource6 = &ip6
+	}
+
 	return 0
 }
 
@@ -363,15 +370,15 @@ func wgTurnOn(paramsHandle C.WireGuardParameters, tunFd int32) int32 {
 		return errCode
 	}
 
-	tun, errCode := openTUNFromSocket(tunFd, logger)
-	if tun == nil {
+	tunnelHandle, errCode := params.WireGuardDevices(tunFd, logger)
+	if errCode != 0 {
+		if tunnelHandle != nil {
+			tunnelHandle.Close()
+		}
 		return errCode
 	}
 
-	logger.Verbosef("Attaching to interface")
-	dev := device.NewDevice(tun, conn.NewStdNetBind(), logger)
-
-	return addTunnelFromDevice(dev, nil, params.exitSettings, "", nil, logger, params.daitaParameters, nil)
+	return tunnels.Insert(tunnelHandle)
 }
 
 func wgTurnOnIANFromExistingTunnel(tun tun.Device, settings string, privateAddr netip.Addr, daitaParameters *daitaParameters) int32 {

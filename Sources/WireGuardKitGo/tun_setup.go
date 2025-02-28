@@ -39,6 +39,10 @@ func openTUNFromSocket(tunFd int32, logger *device.Logger) (tun.Device, int32) {
 }
 
 func bringUpDevice(dev *device.Device, settings string, logger *device.Logger) error {
+	if dev == nil {
+		return nil
+	}
+
 	err := dev.IpcSet(settings)
 	if err != nil {
 		logger.Errorf("Unable to set IPC settings: %v", err)
@@ -47,7 +51,6 @@ func bringUpDevice(dev *device.Device, settings string, logger *device.Logger) e
 	}
 
 	dev.Up()
-	logger.Verbosef("Device started")
 	return nil
 }
 
