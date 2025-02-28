@@ -111,14 +111,6 @@ func (p *WGParameters) RootBinder(rootMtu int) (conn.Bind, tun.Device, int32) {
 	return conn.NewStdNetBind(), nil, 0
 }
 
-func (p *WGParameters) ExitConfig() string {
-	return p.exitSettings
-}
-
-func (p *WGParameters) EntryConfig() *string {
-	return p.entrySettings
-}
-
 // Constructs all the WireGuard devices and brings them up. / Validate()
 // must've returned successfully before calling this function. / If
 // the returned tunnel handle pointer is not nil, it must be closed, even
@@ -142,8 +134,8 @@ func (p *WGParameters) WireGuardDevices(tunFd int32, logger *device.Logger) (*tu
 	rootDev := device.NewDevice(rootTun, rootBinder, logger)
 
 	if p.entrySettings != nil {
-		entry = rootDev
-		exit = device.NewDevice(exitTun, conn.NewStdNetBind(), logger)
+		exit = rootDev
+		entry = device.NewDevice(exitTun, conn.NewStdNetBind(), logger)
 	} else {
 		exit = rootDev
 	}
@@ -154,19 +146,20 @@ func (p *WGParameters) WireGuardDevices(tunFd int32, logger *device.Logger) (*tu
 
 	handle := NewTunnelHandle(exit, entry, logger, virtualNet, user)
 
-	err = bringUpDevice(exit, p.exitSettings, logger)
-	if err != nil {
-		return &handle, errBadWgConfig
-	}
-
 	if entry != nil {
 		err = bringUpDevice(entry, *p.entrySettings, logger)
 
 		if err != nil {
 			return &handle, errBadWgConfig
 		}
-
 	}
+
+	err = bringUpDevice(exit, p.exitSettings, logger)
+	if err != nil {
+		return &handle, errBadWgConfig
+	}
+
+
 
 	if user != nil {
 		err = bringUpDevice(user, *p.userSettings, logger)
@@ -175,7 +168,14 @@ func (p *WGParameters) WireGuardDevices(tunFd int32, logger *device.Logger) (*tu
 		}
 	}
 
-	errCode = p.ConfigureDaita(rootDev)
+	if p.daitaParameters != nil {
+		if entry == nil {
+			errCode = p.ConfigureDaita(exit)
+		} else {
+			errCode = p.ConfigureDaita(entry)
+		}
+	}
+
 	return &handle, errCode
 }
 

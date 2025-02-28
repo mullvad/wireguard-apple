@@ -5,8 +5,8 @@ import Foundation
 import NetworkExtension
 
 #if SWIFT_PACKAGE
-import WireGuardKitGo
 import WireGuardKitC
+import WireGuardKitGo
 @_exported import WireGuardKitTypes
 #endif
 
@@ -211,15 +211,29 @@ public class WireGuardAdapter {
         }
     }
 
-    public func startMultihop(exitConfiguration: TunnelConfiguration, entryConfiguration: TunnelConfiguration?, daita: DaitaConfiguration? = nil, completionHandler: @escaping (WireGuardAdapterError?) -> Void) {
+    public func startMultihop(
+        exitConfiguration: TunnelConfiguration,
+        entryConfiguration: TunnelConfiguration?,
+        daita: DaitaConfiguration? = nil,
+        completionHandler: @escaping (WireGuardAdapterError?) -> Void
+    ) {
         workQueue.async {
             guard case .stopped = self.state else {
                 completionHandler(.invalidState)
                 return
             }
 
-            guard let privateAddress = exitConfiguration.interface.addresses.compactMap({ $0.address as? IPv4Address }).first else
-            {
+            guard let privateAddress4 = exitConfiguration.interface.addresses.compactMap({ $0.address as? IPv4Address })
+                .first
+            else {
+                self.logHandler(.error, "WireGuardAdapter.start: No private IPv4 address found")
+                completionHandler(.noInterfaceIp)
+                return
+            }
+            
+            guard let privateAddress6 = exitConfiguration.interface.addresses.compactMap({ $0.address as? IPv6Address })
+                .first
+            else {
                 self.logHandler(.error, "WireGuardAdapter.start: No private IPv4 address found")
                 completionHandler(.noInterfaceIp)
                 return
@@ -467,23 +481,41 @@ public class WireGuardAdapter {
     /// - Parameter wgConfig: WireGuard configuration
     /// - Throws: an error of type `WireGuardAdapterError`
     /// - Returns: tunnel handle
-    private func startWireGuardBackend(exitWgConfig: String, privateAddress: IPAddress, entryWgConfig: String? = nil, mtu: UInt16 = 1280, daita: DaitaConfiguration?) throws -> Int32 {
+    private func startWireGuardBackend(
+        exitWgConfig: String,
+        privateAddress4: IPv4Address,
+        privateAddress6: IPv6Address,
+        entryWgConfig: String? = nil,
+        mtu: UInt16 = 1280,
+        daita: DaitaConfiguration?
+    ) throws -> Int32 {
         guard let tunnelFileDescriptor = self.tunnelFileDescriptor else {
             throw WireGuardAdapterError.cannotLocateTunnelFileDescriptor
         }
+        
+        var privateAddr4 = "\(privateAddress4)"
+        var privateAddr6 = "\(privateAddress6)"
 
-        var params = DaitaGoParameters(daita: daita)
-        let privateAddr = "\(privateAddress)"
-
-        let handle = if let entryWgConfig {
-            wgTurnOnMultihop(exitWgConfig, entryWgConfig, privateAddr, tunnelFileDescriptor, daita?.machines ?? nil, &params)
-        } else {
-            wgTurnOnIAN(exitWgConfig, tunnelFileDescriptor, privateAddr, daita?.machines ?? nil, &params)
+        let wgParams = wgParamsInit(exitWgConfig, privateAddr4, privateAddr6)
+        if wgParams == 0 {
+            throw WireGuardAdapterError.startWireGuardBackend(-1)
         }
+        defer { wgParamsDestroy(wgParams) }
+        
+        if let entryWgConfig {
+            wgParamsSetEntry(wgParams, entryWgConfig)
+        }
+        
+        if let daita {
+            wgParamsSetDaita(wgParams,DaitaGoParameters(daita: daita),  daita.machines)
+        }
+
+        let handle = wgTurnOn(wgParams, tunnelFileDescriptor)
+
         if handle < 0 {
             throw WireGuardAdapterError.startWireGuardBackend(handle)
         }
-        pingId = UInt16.random(in: UInt16.min...UInt16.max)
+        pingId = UInt16.random(in: UInt16.min ... UInt16.max)
         #if os(iOS)
         wgDisableSomeRoamingForBrokenMobileSemantics(handle)
         #endif
@@ -586,17 +618,23 @@ public class WireGuardAdapter {
                 wgTurnOff(handle)
             }
 
-        case .temporaryShutdown(let settingsGenerator):
+        case let .temporaryShutdown(settingsGenerator):
             guard isSatisfiable else { return }
 
             self.logHandler(.verbose, "Connectivity online, resuming backend.")
 
-            guard let privateAddress = settingsGenerator.exit.configuration.interface.addresses.compactMap({ $0.address as? IPv4Address }).first else
-            {
+            guard let privateAddress4 = settingsGenerator.exit.configuration.interface.addresses
+                .compactMap({ $0.address as? IPv4Address }).first
+            else {
                 self.logHandler(.error, "WireGuardAdapter.start: No private IPv4 address found")
                 return
             }
-
+            guard let privateAddress6 = settingsGenerator.exit.configuration.interface.addresses
+                .compactMap({ $0.address as? IPv6Address }).first
+            else {
+                self.logHandler(.error, "WireGuardAdapter.start: No private IPv6 address found")
+                return
+            }
 
             do {
                 try self.setNetworkSettings(settingsGenerator.generateNetworkSettings())
@@ -605,7 +643,12 @@ public class WireGuardAdapter {
                 self.logEndpointResolutionResults(resolutionResults)
 
                 self.state = .started(
-                    try self.startWireGuardBackend(exitWgConfig: exitWgConfig, privateAddress: privateAddress, daita: settingsGenerator.daita),
+                    try self.startWireGuardBackend(
+                        exitWgConfig: exitWgConfig,
+                        privateAddress4: privateAddress4,
+                        privateAddress6: privateAddress6,
+                        daita: settingsGenerator.daita
+                    ),
                     settingsGenerator
                 )
 

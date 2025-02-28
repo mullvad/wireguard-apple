@@ -21,15 +21,15 @@ typedef struct {
 	void* inner;
 } WireGuardParameters;
 
-extern WireGuardParameters wgParamsInit(char *exitConfig, char* privateIp4, char *privateIp6);
-extern int wgParamsSetEntry(WireGuardParameters params, char *entryConfig);
-extern int wgParamsSetUser(WireGuardParameters params, char *userConfig, char* userIp4, char* userIp6);
-extern int wgParamsSetDaita(WireGuardParameters params, DaitaGoParameters daitaGoParameters, char* maybenotMachines);
-extern void wgParamsDestroy(WireGuardParameters params);
+extern uintptr_t wgParamsInit(const char *exitConfig, const char* privateIp4, const char *privateIp6);
+extern int wgParamsSetEntry(uintptr_t params, const char *entryConfig);
+extern int wgParamsSetUser(uintptr_t params, const char *userConfig, const char* userIp4, const char* userIp6);
+extern int wgParamsSetDaita(uintptr_t params, DaitaGoParameters daitaGoParameters, const char* maybenotMachines);
+extern void wgParamsDestroy(uintptr_t params);
 extern void test_daita(DaitaGoParameters *context);
 typedef void(*logger_fn_t)(void *context, int level, const char *msg);
 extern void wgSetLogger(void *context, logger_fn_t logger_fn);
-extern int wgTurnOn(WireGuardParameters params , int32_t tun_fd);
+extern int wgTurnOn(uintptr_t params , int32_t tun_fd);
 extern int wgTurnOnMultihop(WireGuardParameters params, int32_t tun_fd);
 extern void wgTurnOff(int handle);
 extern int64_t wgSetConfig(int handle, const char *exitSettings, const char *entrySettings);
