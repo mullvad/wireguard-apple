@@ -127,5 +127,11 @@
 	<string>Localized</string>
 	<key>com.wireguard.ios.app_group_id</key>
 	<string>group.$(APP_ID_IOS)</string>
+	<key>com.apple.developer.networking.networkextension</key>
+	<array>
+		<string>packet-tunnel-provider</string>
+	</array>
+	<key>com.apple.developer.networking.wifi-info</key>
+	<true/>
 </dict>
 </plist>

@@ -1,6 +1,3 @@
-// SPDX-License-Identifier: MIT
-// Copyright © 2018-2023 WireGuard LLC. All Rights Reserved.
-
 import UIKit
 import os.log
 
@@ -10,6 +7,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     var window: UIWindow?
     var mainVC: MainViewController?
     var isLaunchedForSpecificAction = false
+    var tunnelsManager: TunnelsManager?
 
     func application(_ application: UIApplication, willFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         Logger.configureGlobal(tagged: "APP", withFilePath: FileManager.logFileURL?.path)
@@ -28,6 +26,18 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         window.makeKeyAndVisible()
 
         self.mainVC = mainVC
+
+        TunnelsManager.create { [weak self] result in
+            guard let self = self else { return }
+
+            switch result {
+            case .failure(let error):
+                ErrorPresenter.showErrorAlert(error: error, from: self)
+            case .success(let tunnelsManager):
+                self.tunnelsManager = tunnelsManager
+                self.mainVC?.setTunnelsManager(tunnelsManager: tunnelsManager)
+            }
+        }
 
         return true
     }
