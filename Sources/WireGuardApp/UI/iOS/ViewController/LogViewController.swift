@@ -1,6 +1,3 @@
-// SPDX-License-Identifier: MIT
-// Copyright © 2018-2023 WireGuard LLC. All Rights Reserved.
-
 import UIKit
 
 class LogViewController: UIViewController {
@@ -60,7 +57,10 @@ class LogViewController: UIViewController {
 
     override func viewDidLoad() {
         title = tr("logViewTitle")
-        navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .save, target: self, action: #selector(saveTapped(sender:)))
+        navigationItem.rightBarButtonItems = [
+            UIBarButtonItem(barButtonSystemItem: .save, target: self, action: #selector(saveTapped(sender:))),
+            UIBarButtonItem(barButtonSystemItem: .trash, target: self, action: #selector(clearLogTapped(sender:)))
+        ]
     }
 
     func updateLogEntries() {
@@ -143,5 +143,10 @@ class LogViewController: UIViewController {
                 self.present(activityVC, animated: true)
             }
         }
+    }
+
+    @objc func clearLogTapped(sender: AnyObject) {
+        Logger.global?.clearLog()
+        textView.text = ""
     }
 }

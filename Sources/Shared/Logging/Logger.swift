@@ -1,6 +1,3 @@
-// SPDX-License-Identifier: MIT
-// Copyright © 2018-2023 WireGuard LLC. All Rights Reserved.
-
 import Foundation
 import os.log
 
@@ -30,6 +27,23 @@ public class Logger {
 
     func writeLog(to targetFile: String) -> Bool {
         return write_log_to_file(targetFile, self.log) == 0
+    }
+
+    func readLog(from filePath: String) -> String? {
+        guard let log = open_log(filePath) else { return nil }
+        defer { close_log(log) }
+        var logEntries = [String]()
+        var cursor: UInt32 = UINT32_MAX
+        cursor = view_lines_from_cursor(log, cursor, &logEntries) { cStr, _, ctx in
+            if let cStr = cStr, let logEntries = ctx?.bindMemory(to: [String].self, capacity: 1) {
+                logEntries.pointee.append(String(cString: cStr))
+            }
+        }
+        return logEntries.joined(separator: "\n")
+    }
+
+    func clearLog() {
+        memset(log, 0, MemoryLayout<OpaquePointer>.size)
     }
 
     static func configureGlobal(tagged tag: String, withFilePath filePath: String?) {
