@@ -1,6 +1,3 @@
-// SPDX-License-Identifier: MIT
-// Copyright © 2018-2023 WireGuard LLC. All Rights Reserved.
-
 import Foundation
 import Network
 import NetworkExtension
@@ -20,6 +17,10 @@ struct DeviceConfiguration {
     let reResolveEndpoint: Bool
 
     func generateNetworkSettings() -> NEPacketTunnelNetworkSettings {
+        return customGenerateNetworkSettings()
+    }
+
+    func customGenerateNetworkSettings() -> NEPacketTunnelNetworkSettings {
         /* iOS requires a tunnel endpoint, whereas in WireGuard it's valid for
          * a tunnel to have no endpoint, or for there to be many endpoints, in
          * which case, displaying a single one in settings doesn't really

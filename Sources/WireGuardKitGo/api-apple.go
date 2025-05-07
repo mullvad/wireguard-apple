@@ -245,6 +245,10 @@ func wgTurnOnMultihop(exitSettings *C.char, entrySettings *C.char, privateIp *C.
 
 //export wgTurnOn
 func wgTurnOn(settings *C.char, tunFd int32, maybeNotMachines *C.char, daitaParameters *C.DaitaGoParameters) int32 {
+	return customWgTurnOn(settings, tunFd, maybeNotMachines, daitaParameters)
+}
+
+func customWgTurnOn(settings *C.char, tunFd int32, maybeNotMachines *C.char, daitaParameters *C.DaitaGoParameters) int32 {
 	logger := &device.Logger{
 		Verbosef: CLogger(0).Printf,
 		Errorf:   CLogger(1).Printf,

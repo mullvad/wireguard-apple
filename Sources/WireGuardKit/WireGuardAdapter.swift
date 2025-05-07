@@ -1,6 +1,3 @@
-// SPDX-License-Identifier: MIT
-// Copyright © 2018-2023 WireGuard LLC. All Rights Reserved.
-
 import Foundation
 import NetworkExtension
 
@@ -236,7 +233,7 @@ public class WireGuardAdapter {
                 self.logEndpointResolutionResults(resolutionResults)
 
                 self.state = .started(
-                    try self.startWireGuardBackend(exitWgConfig: exitWgConfig, privateAddress: privateAddress, entryWgConfig: entryWgConfig, mtu: 1280, daita: daita),
+                    try self.customStartWireGuardBackend(exitWgConfig: exitWgConfig, privateAddress: privateAddress, entryWgConfig: entryWgConfig, mtu: 1280, daita: daita),
                     settingsGenerator
                 )
 
@@ -468,6 +465,14 @@ public class WireGuardAdapter {
     /// - Throws: an error of type `WireGuardAdapterError`
     /// - Returns: tunnel handle
     private func startWireGuardBackend(exitWgConfig: String, privateAddress: IPAddress, entryWgConfig: String? = nil, mtu: UInt16 = 1280, daita: DaitaConfiguration?) throws -> Int32 {
+        return customStartWireGuardBackend(exitWgConfig: exitWgConfig, privateAddress: privateAddress, entryWgConfig: entryWgConfig, mtu: mtu, daita: daita)
+    }
+
+    /// Custom start WireGuard backend method to customize the WireGuard backend start functionality.
+    /// - Parameter wgConfig: WireGuard configuration
+    /// - Throws: an error of type `WireGuardAdapterError`
+    /// - Returns: tunnel handle
+    private func customStartWireGuardBackend(exitWgConfig: String, privateAddress: IPAddress, entryWgConfig: String? = nil, mtu: UInt16 = 1280, daita: DaitaConfiguration?) throws -> Int32 {
         guard let tunnelFileDescriptor = self.tunnelFileDescriptor else {
             throw WireGuardAdapterError.cannotLocateTunnelFileDescriptor
         }

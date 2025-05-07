@@ -14,25 +14,7 @@ import (
 
 //export wgOpenInTunnelICMP
 func wgOpenInTunnelICMP(tunnelHandle int32, addressPtr *C.char) int32 {
-	tun := tunnels.Get(tunnelHandle)
-	if tun == nil {
-		return errNoSuchTunnel
-	}
-	// It is very important to clone this string, as this function will return
-	// before it is actually used in the closure that is passed to
-	// `tun.AddSocket`.
-	address := strings.Clone(C.GoString(addressPtr))
-
-	if tun.VirtualNet == nil {
-		return errNoTunnelVirtualInterface
-	}
-
-	createIcmpSocket := func(ctx context.Context, vnet *netstack.Net) (net.Conn, error) {
-		conn, err := vnet.DialContext(ctx, "ping4", address)
-		return conn, err
-	}
-
-	return tun.AddSocket(context.Background(), createIcmpSocket)
+	return customWgOpenInTunnelICMP(tunnelHandle, addressPtr)
 }
 
 //export wgCloseInTunnelICMP
@@ -136,4 +118,26 @@ func wgSendInTunnelPing(tunnelHandle int32, socketHandle int32, pingId uint16, p
 		return errICMPWriteSocket
 	}
 	return 0
+}
+
+func customWgOpenInTunnelICMP(tunnelHandle int32, addressPtr *C.char) int32 {
+	tun := tunnels.Get(tunnelHandle)
+	if tun == nil {
+		return errNoSuchTunnel
+	}
+	// It is very important to clone this string, as this function will return
+	// before it is actually used in the closure that is passed to
+	// `tun.AddSocket`.
+	address := strings.Clone(C.GoString(addressPtr))
+
+	if tun.VirtualNet == nil {
+		return errNoTunnelVirtualInterface
+	}
+
+	createIcmpSocket := func(ctx context.Context, vnet *netstack.Net) (net.Conn, error) {
+		conn, err := vnet.DialContext(ctx, "ping4", address)
+		return conn, err
+	}
+
+	return tun.AddSocket(context.Background(), createIcmpSocket)
 }
