@@ -1,6 +1,3 @@
-// SPDX-License-Identifier: MIT
-// Copyright © 2018-2023 WireGuard LLC. All Rights Reserved.
-
 import Foundation
 
 extension Array {
@@ -15,8 +12,20 @@ extension Array {
     ///   - transform: the block to perform concurrent computations over the given element.
     /// - Returns: an array of concurrently computed values.
     func concurrentMap<U>(queue: DispatchQueue?, _ transform: (Element) -> U) -> [U] {
+        return customConcurrentMap(queue: queue, transform)
+    }
+
+    /// Custom concurrent map method to customize the concurrent map functionality.
+    ///
+    /// - Parameters:
+    ///   - queue: The queue for performing concurrent computations.
+    ///            If the given queue is serial, the values are mapped in a serial fashion.
+    ///            Pass `nil` to perform computations on the current queue.
+    ///   - transform: the block to perform concurrent computations over the given element.
+    /// - Returns: an array of concurrently computed values.
+    func customConcurrentMap<U>(queue: DispatchQueue?, _ transform: (Element) -> U) -> [U] {
         var result = [U?](repeating: nil, count: self.count)
-        let resultQueue = DispatchQueue(label: "ConcurrentMapQueue")
+        let resultQueue = DispatchQueue(label: "CustomConcurrentMapQueue")
 
         let execute = queue?.sync ?? { $0() }
 

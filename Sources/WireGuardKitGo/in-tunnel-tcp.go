@@ -19,6 +19,11 @@ import (
 //
 //export wgOpenInTunnelTCP
 func wgOpenInTunnelTCP(tunnelHandle int32, address *C.char, timeout uint64) int32 {
+	return customWgOpenInTunnelTCP(tunnelHandle, address, timeout)
+}
+
+// Custom function to open a TCP connection in the tunnel
+func customWgOpenInTunnelTCP(tunnelHandle int32, address *C.char, timeout uint64) int32 {
 	tun := tunnels.Get(tunnelHandle)
 	if tun == nil {
 		return errNoSuchTunnel

@@ -1,6 +1,3 @@
-// SPDX-License-Identifier: MIT
-// Copyright © 2018-2023 WireGuard LLC. All Rights Reserved.
-
 import Network
 import Foundation
 
@@ -16,6 +13,10 @@ extension DNSResolver {
     private static let resolverQueue = DispatchQueue(label: "DNSResolverQueue", qos: .default, attributes: .concurrent)
 
     static func resolveSync(endpoints: [Endpoint?]) -> [Result<Endpoint, DNSResolutionError>?] {
+        return customResolveSync(endpoints: endpoints)
+    }
+
+    static func customResolveSync(endpoints: [Endpoint?]) -> [Result<Endpoint, DNSResolutionError>?] {
         let isAllEndpointsAlreadyResolved = endpoints.allSatisfy { maybeEndpoint -> Bool in
             return maybeEndpoint?.hasHostAsIPAddress() ?? true
         }
