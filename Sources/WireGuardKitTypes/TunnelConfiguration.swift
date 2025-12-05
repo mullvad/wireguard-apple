@@ -3,6 +3,9 @@
 
 import Foundation
 import Network
+// Copyright © 2018-2021 WireGuard LLC. All Rights Reserved.
+
+import Foundation
 
 public final class TunnelConfiguration {
     public var name: String?
@@ -15,6 +18,11 @@ public final class TunnelConfiguration {
         self.peers = peers
         self.name = name
         self.pingableGateway = pingableGateway
+
+    public init(name: String?, interface: InterfaceConfiguration, peers: [PeerConfiguration]) {
+        self.interface = interface
+        self.peers = peers
+        self.name = name
 
         let peerPublicKeysArray = peers.map { $0.publicKey }
         let peerPublicKeysSet = Set<PublicKey>(peerPublicKeysArray)

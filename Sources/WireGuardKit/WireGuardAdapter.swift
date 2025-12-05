@@ -356,6 +356,27 @@ public class WireGuardAdapter {
                     self.logHandler(.error, "Failed to open ICMP socket: \(error)")
                 }
 
+            switch self.state {
+            case .started(let handle, _):
+                do {
+                    try self.setNetworkSettings(settingsGenerator.generateNetworkSettings())
+                } catch let error as WireGuardAdapterError {
+                    completionHandler(error)
+                    return
+                } catch {
+                    fatalError()
+                }
+
+                let (wgConfig, resolutionResults) = settingsGenerator.uapiConfiguration()
+                self.logEndpointResolutionResults(resolutionResults)
+
+                wgSetConfig(handle, wgConfig)
+                #if os(iOS)
+                wgDisableSomeRoamingForBrokenMobileSemantics(handle)
+                #endif
+
+                self.state = .started(handle, settingsGenerator)
+
             case .temporaryShutdown:
                 // On iOS 15.1 or newer, updating network settings may fail when in airplane mode.
                 // Network path monitor will retry updating settings later when connectivity is
@@ -552,6 +573,28 @@ public class WireGuardAdapter {
     }
 
     /// Method invoked by KVO observer when new network path is received.
+    /// Tells if the network path can be used to access network, taking into account if `utun` is the only active
+    /// interface.
+    /// - Parameter path: network path
+    private func canPathBeSatisfied(_ path: Network.NWPath) -> Bool {
+        // Assume that connectivity is not available, when `utun` is the only available interface.
+        if let networkInterface = path.availableInterfaces.first,
+           path.availableInterfaces.count == 1,
+           networkInterface.name.starts(with: "utun") {
+            return false
+        }
+
+        switch path.status {
+        case .requiresConnection, .satisfied:
+            return true
+        case .unsatisfied:
+            return false
+        @unknown default:
+            return true
+        }
+    }
+
+    /// Helper method used by network path monitor.
     /// - Parameter path: new network path
     private func didReceivePathUpdate(path: NetworkExtension.NWPath) {
         let isSamePath = currentDefaultPath?.isEqual(to: path) ?? false
@@ -572,6 +615,7 @@ public class WireGuardAdapter {
             if isSatisfiable {
                 guard !isSamePath else { return }
 
+            if canPathBeSatisfied(path) {
                 let (wgConfig, resolutionResults) = settingsGenerator.endpointUapiConfiguration()
                 self.logEndpointResolutionResults(resolutionResults)
 
@@ -588,6 +632,7 @@ public class WireGuardAdapter {
 
         case .temporaryShutdown(let settingsGenerator):
             guard isSatisfiable else { return }
+            guard canPathBeSatisfied(path) else { return }
 
             self.logHandler(.verbose, "Connectivity online, resuming backend.")
 
