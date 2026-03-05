@@ -493,6 +493,7 @@
 			);
 			name = WireGuardKitTypes;
 			path = Sources/WireGuardKitTypes;
+			path = WireGuardKitTypes;
 			sourceTree = "<group>";
 		};
 		585B10452577E293004F691E /* WireGuardKit */ = {

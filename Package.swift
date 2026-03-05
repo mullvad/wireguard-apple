@@ -7,17 +7,20 @@ let package = Package(
     name: "WireGuardKit",
     platforms: [
         .macOS(.v12),
+      
         .iOS(.v13)
     ],
     products: [
         .library(name: "WireGuardKit", targets: ["WireGuardKit"]),
         .library(name: "WireGuardKitTypes", type: .dynamic, targets: ["WireGuardKitTypes"])
+        .library(name: "WireGuardKitTypes", targets: ["WireGuardKitTypes"])
     ],
     dependencies: [],
     targets: [
         .target(
             name: "WireGuardKit",
             dependencies: ["WireGuardKitGo", "WireGuardKitTypes"]
+            dependencies: ["WireGuardKitC", "WireGuardKitGo", "WireGuardKitTypes"]
         ),
         .target(
             name: "WireGuardKitTypes",

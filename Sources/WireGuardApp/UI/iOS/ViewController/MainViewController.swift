@@ -1,6 +1,3 @@
-// SPDX-License-Identifier: MIT
-// Copyright © 2018-2023 WireGuard LLC. All Rights Reserved.
-
 import UIKit
 
 class MainViewController: UISplitViewController {
@@ -33,6 +30,7 @@ class MainViewController: UISplitViewController {
     }
 
     override func viewDidLoad() {
+        super.viewDidLoad()
         delegate = self
 
         // On iPad, always show both masterVC and detailVC, even in portrait mode, like the Settings app
