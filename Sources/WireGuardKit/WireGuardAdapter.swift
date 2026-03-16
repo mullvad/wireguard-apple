@@ -195,18 +195,18 @@ public class WireGuardAdapter {
 
     /// Returns a runtime configuration from WireGuard.
     /// - Parameter completionHandler: completion handler.
-    public func getRuntimeConfiguration(completionHandler: @escaping (String?) -> Void) {
-        workQueue.async {
+    public func getRuntimeConfiguration() -> String? {
+        dispatchPrecondition(condition: .notOnQueue(workQueue))
+        return workQueue.sync {
             guard case .started(let handle, _) = self.state else {
-                completionHandler(nil)
-                return
+                return nil
             }
-
             if let settings = wgGetConfig(handle) {
-                completionHandler(String(cString: settings))
+                let settingsString = String(cString: settings)
                 free(settings)
+                return settingsString
             } else {
-                completionHandler(nil)
+                return nil
             }
         }
     }
